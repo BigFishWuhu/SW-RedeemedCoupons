@@ -1,0 +1,11 @@
+{
+  "name": "swcoupon",
+  "private": true,
+  "scripts": {
+    "check": "node --check scripts/redeem-coupons.js",
+    "redeem": "node scripts/redeem-coupons.js"
+  },
+  "dependencies": {
+    "playwright": "^1.62.1"
+  }
+}

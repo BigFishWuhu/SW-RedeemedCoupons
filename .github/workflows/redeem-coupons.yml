@@ -1,0 +1,49 @@
+name: Redeem SW Coupons
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: redeem-sw-coupons
+  cancel-in-progress: false
+
+jobs:
+  redeem:
+    runs-on: ubuntu-latest
+    env:
+      HIVE_ACCOUNTS: ${{ secrets.HIVE_ACCOUNTS }}
+      HIVE_IDS: ${{ secrets.HIVE_IDS }}
+      HIVE_ID: ${{ secrets.HIVE_ID }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_KV_NAMESPACE_ID: ${{ secrets.CLOUDFLARE_KV_NAMESPACE_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      SW_SERVER: ${{ vars.SW_SERVER }}
+      INCLUDE_EXPIRED: ${{ vars.INCLUDE_EXPIRED }}
+      START_DELAY_MS: ${{ vars.START_DELAY_MS }}
+      REDEEM_DELAY_MS: ${{ vars.REDEEM_DELAY_MS }}
+      ACTION_DELAY_MS: ${{ vars.ACTION_DELAY_MS }}
+      KV_KEY_PREFIX: ${{ vars.KV_KEY_PREFIX }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Query and redeem coupons
+        run: npm run redeem
