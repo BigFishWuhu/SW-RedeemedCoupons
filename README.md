@@ -1,6 +1,6 @@
 # SW Coupon GitHub Action
 
-This repository redeems Summoners War coupon codes from the sw-coupons feed on a GitHub Actions schedule.
+This repository redeems Summoners War coupon codes from the SWGT feed on a GitHub Actions schedule.
 
 Redemption runs through Playwright on the official Hive coupon page instead of calling Hive coupon endpoints directly from Node.
 
@@ -21,7 +21,6 @@ Account configuration priority is `HIVE_ACCOUNTS`, then `HIVE_IDS`, then `HIVE_I
 Optional repository variables:
 
 - `SW_SERVER`: one of `global`, `korea`, `japan`, `china`, `asia`, `europe`. Defaults to `china`.
-- `INCLUDE_EXPIRED`: set to `true` to include expired coupons from the feed.
 - `START_DELAY_MS`: randomized delay before querying coupons after the workflow starts. Defaults to `0-180000` (0-3 minutes). Set to `0` to disable.
 - `REDEEM_DELAY_MS`: randomized delay between coupon attempts. Use a range like `4500-12000`; a single number is treated as the middle of a jittered range. Defaults to `4500-12000`.
 - `ACTION_DELAY_MS`: randomized delay around page actions and the check-to-redeem step. Defaults to `800-2200`.
@@ -29,6 +28,6 @@ Optional repository variables:
 - `PLAYWRIGHT_HEADED`: set to `true` only for local debugging with a visible browser.
 - `KV_KEY_PREFIX`: Cloudflare KV key prefix. Defaults to `swcoupon:redeemed`.
 
-The workflow runs once per day at 12:00 China Standard Time (04:00 UTC) and can also be started manually from the Actions tab.
+The workflow runs once per day at 12:00 China Standard Time (04:00 UTC) and can also be started manually from the Actions tab. It first compares the SWGT codes with each account's Cloudflare KV record. If every code has already been redeemed, it skips Chromium installation and the redemption run.
 
 Successful redemptions are saved in Cloudflare KV, not in the repository. Each account uses a key like `swcoupon:redeemed:<hiveIdHash>`, and the value stores redeemed coupon codes for that account/server. Discord notifications include each Hive ID.

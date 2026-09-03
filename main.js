@@ -1,15 +1,15 @@
 // ==UserScript==
 // @name         Summoners War Coupon Auto Redeemer
-// @namespace    https://sw-coupons.netlify.app/
-// @version      1.0.0
-// @description  Auto-fill Hive ID/server and redeem all available coupon codes from sw-coupons.netlify.app
+// @namespace    https://swgt.io/
+// @version      1.1.0
+// @description  Auto-fill Hive ID/server and redeem all available coupon codes from SWGT
 // @match        https://event.withhive.com/ci/smon/evt_coupon*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
-// @connect      sw-coupons.netlify.app
+// @connect      swgt.io
 // @connect      event.withhive.com
 // @run-at       document-end
 // ==/UserScript==
@@ -17,12 +17,11 @@
 (function () {
     'use strict';
 
-    const CODE_LIST_URL = 'https://sw-coupons.netlify.app/.netlify/functions/get-coupons';
+    const CODE_LIST_URL = 'https://swgt.io/controllers/dashboard/loadSummonersWarGameCodes';
     const DEFAULTS = {
         hiveId: '',
         server: 'china',
         delayMs: 1200,
-        includeExpired: false,
         autoStart: false
     };
 
@@ -53,7 +52,6 @@
             hiveId: String(GM_getValue('hiveId', DEFAULTS.hiveId) || '').trim(),
             server: String(GM_getValue('server', DEFAULTS.server) || DEFAULTS.server).trim(),
             delayMs: Number(GM_getValue('delayMs', DEFAULTS.delayMs) || DEFAULTS.delayMs),
-            includeExpired: Boolean(GM_getValue('includeExpired', DEFAULTS.includeExpired)),
             autoStart: Boolean(GM_getValue('autoStart', DEFAULTS.autoStart))
         };
     }
@@ -62,7 +60,6 @@
         GM_setValue('hiveId', String(next.hiveId || '').trim());
         GM_setValue('server', String(next.server || DEFAULTS.server).trim());
         GM_setValue('delayMs', Math.max(0, Number(next.delayMs) || DEFAULTS.delayMs));
-        GM_setValue('includeExpired', Boolean(next.includeExpired));
         GM_setValue('autoStart', Boolean(next.autoStart));
     }
 
@@ -70,7 +67,7 @@
         return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
-    function requestJson(url, method = 'GET', data = null) {
+    function requestText(url, method = 'GET', data = null) {
         return new Promise((resolve, reject) => {
             addLog(`HTTP ${method} ${url}`);
             GM_xmlhttpRequest({
@@ -82,11 +79,11 @@
                 responseType: 'text',
                 onload: (res) => {
                     addLog(`HTTP ${res.status} ${url}`);
-                    try {
-                        resolve(JSON.parse(res.responseText));
-                    } catch (err) {
-                        reject(new Error(`Invalid JSON from ${url}`));
+                    if (res.status < 200 || res.status >= 300) {
+                        reject(new Error(`Request failed: ${url} (${res.status})`));
+                        return;
                     }
+                    resolve(res.responseText);
                 },
                 onerror: (err) => {
                     addLog(`HTTP error ${url}: ${JSON.stringify(err || {})}`);
@@ -260,14 +257,12 @@
             return;
         }
 
-        const includeExpired = confirm('Include expired codes too?');
         const autoStart = confirm('Auto start when page opens?');
 
         saveConfig({
             hiveId,
             server: normalizeServer(server),
             delayMs: Number(delayMs) || DEFAULTS.delayMs,
-            includeExpired,
             autoStart
         });
 
@@ -308,21 +303,19 @@
 
     async function fetchCoupons() {
         addLog('Fetching coupon list');
-        const data = await requestJson(CODE_LIST_URL);
-        const list = Array.isArray(data?.coupons) ? data.coupons : [];
-        const cfg = getConfig();
+        const html = await requestText(CODE_LIST_URL);
+        const codePattern = /\bdata-clipboard-text\s*=\s*(["'])([^"']+)\1/gi;
+        const codes = new Set();
+        let match;
 
-        return list
-            .filter((item) => item && typeof item.code === 'string')
-            .filter((item) => {
-                if (cfg.includeExpired) {
-                    return true;
-                }
-                return item.status === 'valid' || item.status === 'verified';
-            })
-            .map((item) => String(item.code).trim().toUpperCase())
-            .filter(Boolean)
-            .filter((code, index, arr) => arr.indexOf(code) === index);
+        while ((match = codePattern.exec(html)) !== null) {
+            const code = match[2].trim().toUpperCase();
+            if (code) {
+                codes.add(code);
+            }
+        }
+
+        return Array.from(codes);
     }
 
     async function checkUserAndRedeem(code) {
@@ -376,7 +369,7 @@
 
         syncFormFields();
         setStatus('loading');
-        renderProgress('Loading coupons from sw-coupons.netlify.app ...');
+        renderProgress('Loading coupons from SWGT ...');
 
         try {
             state.queue = await fetchCoupons();

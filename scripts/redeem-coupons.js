@@ -1,9 +1,8 @@
 const crypto = require('node:crypto');
-const { chromium } = require('playwright');
+const fs = require('node:fs');
 
-const COUPON_LIST_URL = 'https://sw-coupons.netlify.app/.netlify/functions/get-coupons';
+const COUPON_LIST_URL = 'https://swgt.io/controllers/dashboard/loadSummonersWarGameCodes';
 const HIVE_COUPON_PAGE_URL = 'https://event.withhive.com/ci/smon/evt_coupon';
-const VALID_STATUSES = new Set(['valid', 'verified']);
 const SERVER_LABELS = new Set(['global', 'korea', 'japan', 'china', 'asia', 'europe']);
 const CLOUDFLARE_API_BASE_URL = 'https://api.cloudflare.com/client/v4';
 
@@ -11,7 +10,6 @@ const config = {
     accounts: parseAccounts(),
     country: String(process.env.SW_COUNTRY || 'NL').trim(),
     lang: String(process.env.SW_LANG || 'en').trim(),
-    includeExpired: parseBoolean(process.env.INCLUDE_EXPIRED),
     startDelayRangeMs: parseDelayRange(process.env.START_DELAY_MS || '0-180000'),
     delayRangeMs: parseDelayRange(process.env.REDEEM_DELAY_MS || '4500-12000'),
     actionDelayRangeMs: parseDelayRange(process.env.ACTION_DELAY_MS || '800-2200'),
@@ -22,6 +20,7 @@ const config = {
     kvKeyPrefix: String(process.env.KV_KEY_PREFIX || 'swcoupon:redeemed').trim(),
     discordWebhookUrl: String(process.env.DISCORD_WEBHOOK_URL || '').trim(),
     dryRun: parseBoolean(process.env.DRY_RUN),
+    checkOnly: parseBoolean(process.env.CHECK_ONLY),
     headless: !parseBoolean(process.env.PLAYWRIGHT_HEADED)
 };
 
@@ -63,6 +62,14 @@ async function main() {
             }
 
             console.log(`Account ${maskHiveId(accountConfig.hiveId)} (${accountConfig.server}): fetched ${coupons.length}, ${queue.length} not recorded.`);
+        }
+
+        summary.pending = tasks.length;
+        if (config.checkOnly) {
+            writeGithubOutput('pending', summary.pending);
+            console.log(`Unredeemed coupon tasks: ${summary.pending}`);
+            logSummary(summary);
+            return;
         }
 
         if (tasks.length && !config.dryRun) {
@@ -157,31 +164,21 @@ async function fetchCoupons() {
         throw new Error(`Coupon list request failed with HTTP ${response.status}: ${shortText(text)}`);
     }
 
-    let data;
-    try {
-        data = JSON.parse(text);
-    } catch {
-        throw new Error(`Coupon list returned invalid JSON: ${shortText(text)}`);
-    }
-
-    const coupons = Array.isArray(data?.coupons) ? data.coupons : [];
+    const codePattern = /\bdata-clipboard-text\s*=\s*(["'])([^"']+)\1/gi;
     const byCode = new Map();
+    let match;
 
-    for (const item of coupons) {
-        const code = String(item?.code || '').trim().toUpperCase();
+    while ((match = codePattern.exec(text)) !== null) {
+        const code = match[2].trim().toUpperCase();
         if (!code) {
-            continue;
-        }
-
-        if (!config.includeExpired && !VALID_STATUSES.has(String(item.status || '').toLowerCase())) {
             continue;
         }
 
         if (!byCode.has(code)) {
             byCode.set(code, {
                 code,
-                status: item.status || null,
-                expiresAt: item.expiresAt || item.expireAt || item.expiredAt || null
+                status: 'available',
+                expiresAt: null
             });
         }
     }
@@ -190,6 +187,7 @@ async function fetchCoupons() {
 }
 
 async function createPageRedeemer() {
+    const { chromium } = require('playwright');
     const browser = await chromium.launch({
         headless: config.headless
     });
@@ -541,6 +539,7 @@ function buildDiscordMessage(summary) {
 function createSummary() {
     return {
         fetched: 0,
+        pending: 0,
         startDelayMs: 0,
         accounts: [],
         recordUpdated: false,
@@ -563,6 +562,7 @@ function createAccountSummary(accountConfig) {
 function logSummary(summary) {
     console.log([
         `Summary: fetched=${summary.fetched}`,
+        `pending=${summary.pending}`,
         `startDelayMs=${summary.startDelayMs}`,
         `accounts=${summary.accounts.length}`,
         `redeemed=${totalCount(summary, 'redeemed')}`,
@@ -570,6 +570,13 @@ function logSummary(summary) {
         `failed=${totalCount(summary, 'failed')}`,
         `recordUpdated=${summary.recordUpdated ? 'yes' : 'no'}`
     ].join(' '));
+}
+
+function writeGithubOutput(name, value) {
+    const outputPath = String(process.env.GITHUB_OUTPUT || '').trim();
+    if (outputPath) {
+        fs.appendFileSync(outputPath, `${name}=${value}\n`);
+    }
 }
 
 function totalCount(summary, field) {

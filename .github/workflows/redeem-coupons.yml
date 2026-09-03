@@ -23,7 +23,6 @@ jobs:
       CLOUDFLARE_KV_NAMESPACE_ID: ${{ secrets.CLOUDFLARE_KV_NAMESPACE_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       SW_SERVER: ${{ vars.SW_SERVER }}
-      INCLUDE_EXPIRED: ${{ vars.INCLUDE_EXPIRED }}
       START_DELAY_MS: ${{ vars.START_DELAY_MS }}
       REDEEM_DELAY_MS: ${{ vars.REDEEM_DELAY_MS }}
       ACTION_DELAY_MS: ${{ vars.ACTION_DELAY_MS }}
@@ -42,8 +41,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check for unredeemed coupons
+        id: coupon_check
+        env:
+          CHECK_ONLY: 'true'
+        run: npm run redeem
+
       - name: Install browser
+        if: steps.coupon_check.outputs.pending != '0'
         run: npx playwright install --with-deps chromium
 
       - name: Query and redeem coupons
+        if: steps.coupon_check.outputs.pending != '0'
         run: npm run redeem
