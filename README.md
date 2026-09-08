@@ -14,10 +14,31 @@
 
 ## Docker Compose 部署
 
-需要安装 Docker 与 Docker Compose。默认配置不需要 `.env`，直接启动：
+需要安装 Docker 与 Docker Compose。克隆仓库后可以直接使用仓库内的 `compose.yaml`：
 
 ```bash
+git clone https://github.com/BigFishWuhu/SW-RedeemedCoupons.git
+cd SW-RedeemedCoupons
 docker compose up -d --build
+```
+
+对应的 Compose 配置如下，可直接保存为 `compose.yaml`：
+
+```yaml
+services:
+  swcoupon:
+    build: .
+    image: sw-redeemed-coupons:latest
+    container_name: swcoupon
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - swcoupon-data:/app/data
+    shm_size: 1gb
+
+volumes:
+  swcoupon-data:
 ```
 
 访问 `http://服务器地址:3000`。首次访问会显示初始化向导，在页面中创建管理员用户名和密码，创建完成后自动登录。
@@ -32,13 +53,32 @@ SQLite 数据库存放在名为 `swcoupon-data` 的 Docker volume 中，更新�
 ghcr.io/<GitHub 用户或组织>/<仓库名>:latest
 ```
 
-在部署机器的 `.env` 中只需设置镜像地址：
+如果不想在 VPS 上构建镜像，可以使用下面的 `compose.yaml` 直接部署本仓库发布的 GHCR 镜像：
 
-```dotenv
-IMAGE_NAME=ghcr.io/owner/repository:latest
+```yaml
+services:
+  swcoupon:
+    image: ghcr.io/bigfishwuhu/sw-redeemedcoupons:latest
+    pull_policy: always
+    container_name: swcoupon
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - swcoupon-data:/app/data
+    shm_size: 1gb
+
+volumes:
+  swcoupon-data:
 ```
 
-然后拉取并启动，无需本地构建：
+在 `compose.yaml` 所在目录启动：
+
+```bash
+docker compose up -d
+```
+
+更新到最新镜像：
 
 ```bash
 docker compose pull
@@ -46,6 +86,8 @@ docker compose up -d
 ```
 
 如果 GHCR package 是私有的，先执行 `docker login ghcr.io`。也可以在 GitHub package 设置中将镜像改为 Public。
+
+两个示例均使用默认配置，不需要创建 `.env`。如需修改端口、定时兑换时间或其他选项，可在 `environment` 中加入下方配置项。
 
 ## 配置项
 
