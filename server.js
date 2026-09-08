@@ -18,6 +18,7 @@ const AUTO_REDEEM_MINUTE = clamp(process.env.AUTO_REDEEM_MINUTE, 0, 59, 0);
 const db = new AppDatabase(path.join(DATA_DIR, 'swcoupon.sqlite'));
 const createdAdmin = db.initializeAdmin(process.env.ADMIN_USERNAME || 'admin', process.env.ADMIN_PASSWORD);
 if (createdAdmin) console.log(`Administrator "${process.env.ADMIN_USERNAME || 'admin'}" created.`);
+else if (db.needsSetup()) console.log('No administrator exists. Open the web console to create the initial account.');
 
 const jobState = { running: false, jobId: null, progress: null, error: null, startedAt: null };
 const loginAttempts = new Map();
@@ -64,13 +65,27 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
         console.error(error.stack || error.message);
         const isConflict = String(error.code || '').includes('SQLITE_CONSTRAINT_UNIQUE');
-        const status = error.statusCode || (isConflict ? 409 : /必填|无效|至少|不能超过|格式/.test(error.message) ? 400 : 500);
+        const status = error.statusCode || (isConflict ? 409 : /必填|无效|至少|不能超过|格式|用户名|密码|不一致/.test(error.message) ? 400 : 500);
         json(res, status, { error: status === 500 ? '服务器内部错误' : isConflict ? '相同 Hive ID 和服务器的账号已存在' : error.message });
     }
 });
 
 async function handleApi(req, res, url) {
     if (req.method === 'GET' && url.pathname === '/api/health') return json(res, 200, { ok: true });
+    if (req.method === 'GET' && url.pathname === '/api/setup-status') {
+        return json(res, 200, { required: db.needsSetup() });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/setup') {
+        requireSameOrigin(req);
+        if (!db.needsSetup()) return json(res, 409, { error: '管理员已经创建，请直接登录' });
+        const body = await readJson(req);
+        if (body.password !== body.confirmPassword) return json(res, 400, { error: '两次输入的密码不一致' });
+        const user = db.createInitialAdmin(body.username, body.password);
+        const session = db.createSession(user.id, SESSION_HOURS);
+        res.setHeader('Set-Cookie', sessionCookie(session.token, req));
+        console.log(`Initial administrator "${user.username}" created from the setup page.`);
+        return json(res, 201, { user });
+    }
     if (req.method === 'POST' && url.pathname === '/api/login') {
         requireSameOrigin(req);
         const remoteAddress = req.socket.remoteAddress || 'unknown';

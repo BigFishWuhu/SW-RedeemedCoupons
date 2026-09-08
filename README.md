@@ -14,21 +14,15 @@
 
 ## Docker Compose 部署
 
-需要安装 Docker 与 Docker Compose。
-
-```bash
-cp .env.example .env
-```
-
-编辑 `.env`，至少将 `ADMIN_PASSWORD` 改成不少于 10 个字符的随机密码，然后启动：
+需要安装 Docker 与 Docker Compose。默认配置不需要 `.env`，直接启动：
 
 ```bash
 docker compose up -d --build
 ```
 
-访问 `http://服务器地址:3000`，使用 `.env` 中的管理员账号登录。SQLite 数据库存放在名为 `swcoupon-data` 的 Docker volume 中，更新或重建容器不会丢失。
+访问 `http://服务器地址:3000`。首次访问会显示初始化向导，在页面中创建管理员用户名和密码，创建完成后自动登录。
 
-首次启动创建管理员后，修改 `.env` 中的密码不会更改已有管理员密码；请在页面的“安全设置”中修改密码。
+SQLite 数据库存放在名为 `swcoupon-data` 的 Docker volume 中，更新或重建容器不会丢失。以后访问会直接显示登录页；管理员密码可在“安全设置”中修改。
 
 ## 使用 GitHub 发布的镜像
 
@@ -38,11 +32,10 @@ docker compose up -d --build
 ghcr.io/<GitHub 用户或组织>/<仓库名>:latest
 ```
 
-在部署机器的 `.env` 中设置：
+在部署机器的 `.env` 中只需设置镜像地址：
 
 ```dotenv
 IMAGE_NAME=ghcr.io/owner/repository:latest
-ADMIN_PASSWORD=replace-with-a-long-random-password
 ```
 
 然后拉取并启动，无需本地构建：
@@ -58,8 +51,8 @@ docker compose up -d
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `ADMIN_USERNAME` | `admin` | 首次启动创建的管理员用户名 |
-| `ADMIN_PASSWORD` | 无 | 首次启动必填，至少 10 个字符 |
+| `ADMIN_USERNAME` | 无 | 可选：无人值守部署时预先创建管理员 |
+| `ADMIN_PASSWORD` | 无 | 可选：与 `ADMIN_USERNAME` 配合，至少 10 个字符 |
 | `PORT` | `3000` | 宿主机映射端口（Compose 使用） |
 | `APP_TIMEZONE` | `Asia/Shanghai` | 定时任务使用的 IANA 时区 |
 | `AUTO_REDEEM` | `true` | 是否启用每日自动兑换 |
@@ -80,7 +73,7 @@ docker compose up -d
 ```bash
 npm ci
 npx playwright install chromium
-ADMIN_USERNAME=admin ADMIN_PASSWORD=development-password npm start
+npm start
 ```
 
 运行静态检查和测试：

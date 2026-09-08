@@ -14,14 +14,20 @@
         <section class="login-card">
             <div class="brand-mark">SW</div>
             <p class="eyebrow">SUMMONERS WAR</p>
-            <h1>兑换控制台</h1>
-            <p class="muted">管理兑换账号，自动领取最新礼包。</p>
+            <h1 id="authTitle">兑换控制台</h1>
+            <p id="authDescription" class="muted">管理兑换账号，自动领取最新礼包。</p>
+            <form id="setupForm" class="stack hidden">
+                <label>管理员用户名<input name="username" value="admin" minlength="2" maxlength="50" autocomplete="username" required></label>
+                <label>管理员密码<input name="password" type="password" minlength="10" autocomplete="new-password" required></label>
+                <label>确认密码<input name="confirmPassword" type="password" minlength="10" autocomplete="new-password" required></label>
+                <button class="button primary wide" type="submit">创建管理员并进入</button>
+            </form>
             <form id="loginForm" class="stack">
                 <label>用户名<input name="username" autocomplete="username" required autofocus></label>
                 <label>密码<input name="password" type="password" autocomplete="current-password" required></label>
                 <button class="button primary wide" type="submit">登录控制台</button>
             </form>
-            <p id="loginError" class="form-error"></p>
+            <p id="authError" class="form-error"></p>
         </section>
     </main>
 

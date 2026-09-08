@@ -21,6 +21,8 @@ async function api(url, options = {}) {
 async function boot() {
     bindEvents();
     try {
+        const setup = await api('/api/setup-status');
+        if (setup.required) return showSetup();
         const { user } = await api('/api/me');
         state.user = user;
         showApp();
@@ -29,6 +31,7 @@ async function boot() {
 }
 
 function bindEvents() {
+    $('#setupForm').addEventListener('submit', setupAdmin);
     $('#loginForm').addEventListener('submit', login);
     $('#logoutButton').addEventListener('click', logout);
     $('#redeemAllButton').addEventListener('click', () => redeem());
@@ -45,7 +48,7 @@ function bindEvents() {
 
 async function login(event) {
     event.preventDefault();
-    $('#loginError').textContent = '';
+    $('#authError').textContent = '';
     const body = Object.fromEntries(new FormData(event.currentTarget));
     try {
         const { user } = await api('/api/login', { method: 'POST', body: JSON.stringify(body) });
@@ -53,7 +56,25 @@ async function login(event) {
         event.currentTarget.reset();
         showApp();
         await loadAll();
-    } catch (error) { $('#loginError').textContent = error.message; }
+    } catch (error) { $('#authError').textContent = error.message; }
+}
+
+async function setupAdmin(event) {
+    event.preventDefault();
+    $('#authError').textContent = '';
+    const body = Object.fromEntries(new FormData(event.currentTarget));
+    if (body.password !== body.confirmPassword) {
+        $('#authError').textContent = '两次输入的密码不一致';
+        return;
+    }
+    try {
+        const { user } = await api('/api/setup', { method: 'POST', body: JSON.stringify(body) });
+        state.user = user;
+        event.currentTarget.reset();
+        showApp();
+        await loadAll();
+        toast('管理员创建成功');
+    } catch (error) { $('#authError').textContent = error.message; }
 }
 
 async function logout() {
@@ -65,6 +86,22 @@ function showLogin() {
     clearInterval(state.poller);
     $('#appView').classList.add('hidden');
     $('#loginView').classList.remove('hidden');
+    $('#setupForm').classList.add('hidden');
+    $('#loginForm').classList.remove('hidden');
+    $('#authTitle').textContent = '兑换控制台';
+    $('#authDescription').textContent = '管理兑换账号，自动领取最新礼包。';
+    $('#authError').textContent = '';
+}
+
+function showSetup() {
+    clearInterval(state.poller);
+    $('#appView').classList.add('hidden');
+    $('#loginView').classList.remove('hidden');
+    $('#loginForm').classList.add('hidden');
+    $('#setupForm').classList.remove('hidden');
+    $('#authTitle').textContent = '创建管理员';
+    $('#authDescription').textContent = '首次使用，请创建用于登录控制台的账户和密码。';
+    $('#authError').textContent = '';
 }
 
 function showApp() {

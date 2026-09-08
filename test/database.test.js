@@ -14,7 +14,10 @@ function database(t) {
 
 test('initializes admin and authenticates sessions', (t) => {
     const db = database(t);
+    assert.equal(db.needsSetup(), true);
+    assert.equal(db.initializeAdmin('admin', ''), false);
     assert.equal(db.initializeAdmin('admin', 'a-secure-password'), true);
+    assert.equal(db.needsSetup(), false);
     assert.equal(db.initializeAdmin('ignored', 'another-password'), false);
     assert.equal(db.authenticate('admin', 'wrong'), null);
     const user = db.authenticate('admin', 'a-secure-password');
@@ -23,6 +26,13 @@ test('initializes admin and authenticates sessions', (t) => {
     assert.equal(db.getSession(session.token).username, 'admin');
     db.deleteSession(session.token);
     assert.equal(db.getSession(session.token), null);
+});
+
+test('creates the first administrator interactively only once', (t) => {
+    const db = database(t);
+    const user = db.createInitialAdmin('owner', 'interactive-password');
+    assert.deepEqual({ username: user.username, needsSetup: db.needsSetup() }, { username: 'owner', needsSetup: false });
+    assert.throws(() => db.createInitialAdmin('second', 'another-password'), /已经创建/);
 });
 
 test('manages accounts and keeps record snapshots after deletion', (t) => {
