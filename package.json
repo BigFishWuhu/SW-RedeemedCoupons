@@ -1,9 +1,15 @@
 {
   "name": "swcoupon",
   "private": true,
+  "version": "2.0.0",
+  "description": "Self-hosted Summoners War coupon redemption console",
+  "engines": {
+    "node": ">=22.5"
+  },
   "scripts": {
-    "check": "node --check scripts/redeem-coupons.js",
-    "redeem": "node scripts/redeem-coupons.js"
+    "start": "node server.js",
+    "check": "node --check server.js && node --check lib/database.js && node --check lib/redeemer.js && node --check public/app.js",
+    "test": "node --test"
   },
   "dependencies": {
     "playwright": "^1.62.1"

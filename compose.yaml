@@ -1,0 +1,23 @@
+services:
+  swcoupon:
+    image: ${IMAGE_NAME:-sw-redeemed-coupons:latest}
+    build: .
+    container_name: swcoupon
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请在 .env 中设置 ADMIN_PASSWORD（至少 10 个字符）}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Shanghai}
+      AUTO_REDEEM: ${AUTO_REDEEM:-true}
+      AUTO_REDEEM_HOUR: ${AUTO_REDEEM_HOUR:-12}
+      AUTO_REDEEM_MINUTE: ${AUTO_REDEEM_MINUTE:-0}
+      REDEEM_DELAY_MS: ${REDEEM_DELAY_MS:-4500-12000}
+      ACTION_DELAY_MS: ${ACTION_DELAY_MS:-800-2200}
+    volumes:
+      - swcoupon-data:/app/data
+    shm_size: 1gb
+
+volumes:
+  swcoupon-data:

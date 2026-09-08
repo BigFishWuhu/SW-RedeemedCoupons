@@ -1,0 +1,10 @@
+.git
+.github
+data
+node_modules
+npm-debug.log
+.env
+*.sqlite*
+main.js
+scripts
+test
