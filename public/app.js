@@ -1,7 +1,7 @@
 const state = { user: null, accounts: [], recordPage: 1, poller: null };
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
-const pageTitles = { dashboard: '运行总览', accounts: '兑换账号', records: '兑换记录', telegram: 'Telegram 推送', security: '安全设置' };
+const pageTitles = { dashboard: '运行总览', accounts: '兑换账号', records: '兑换记录', automation: '运行设置', telegram: 'Telegram 推送', security: '安全设置' };
 const serverNames = { china: '中国服', global: '全球服', asia: '亚洲服', europe: '欧洲服', korea: '韩国服', japan: '日本服' };
 const statusNames = { redeemed: '兑换成功', 'already-redeemed': '此前已兑换', failed: '兑换失败' };
 
@@ -37,6 +37,7 @@ function bindEvents() {
     $('#redeemAllButton').addEventListener('click', () => redeem());
     $('#addAccountButton').addEventListener('click', () => openAccount());
     $('#accountForm').addEventListener('submit', saveAccount);
+    $('#automationForm').addEventListener('submit', saveAutomation);
     $('#telegramForm').addEventListener('submit', saveTelegram);
     $('#testTelegramButton').addEventListener('click', testTelegram);
     $('#clearTelegramButton').addEventListener('click', clearTelegram);
@@ -119,7 +120,7 @@ function showApp() {
 
 async function loadAll() {
     await loadAccounts();
-    await Promise.all([loadDashboard(), loadRecords(), loadRecentRecords(), loadTelegram()]);
+    await Promise.all([loadDashboard(), loadRecords(), loadRecentRecords(), loadAutomation(), loadTelegram()]);
 }
 
 function go(page) {
@@ -293,6 +294,38 @@ async function changePassword(event) {
 async function loadTelegram() {
     try {
         renderTelegram(await api('/api/telegram'));
+    } catch (error) { toast(error.message, true); }
+}
+
+async function loadAutomation() {
+    try {
+        renderAutomation(await api('/api/automation'));
+    } catch (error) { toast(error.message, true); }
+}
+
+function renderAutomation(config) {
+    const form = $('#automationForm');
+    for (const field of ['scheduleTime', 'timezone', 'redeemDelayMinSeconds', 'redeemDelayMaxSeconds', 'actionDelayMinSeconds', 'actionDelayMaxSeconds']) {
+        form.elements[field].value = config[field];
+    }
+    form.elements.enabled.checked = config.enabled;
+    const status = $('#automationStatus');
+    status.className = `status ${config.enabled ? 'success' : 'neutral'}`;
+    status.textContent = config.enabled ? `${config.scheduleTime} · ${config.timezone}` : '已停用';
+}
+
+async function saveAutomation(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const body = Object.fromEntries(new FormData(form));
+    body.enabled = form.elements.enabled.checked;
+    for (const field of ['redeemDelayMinSeconds', 'redeemDelayMaxSeconds', 'actionDelayMinSeconds', 'actionDelayMaxSeconds']) {
+        body[field] = Number(body[field]);
+    }
+    try {
+        const config = await api('/api/automation', { method: 'PUT', body: JSON.stringify(body) });
+        renderAutomation(config);
+        toast('运行设置已保存并立即生效');
     } catch (error) { toast(error.message, true); }
 }
 

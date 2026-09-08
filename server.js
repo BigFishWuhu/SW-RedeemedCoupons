@@ -11,10 +11,17 @@ const PORT = Math.max(1, Number(process.env.PORT || 3000));
 const HOST = process.env.HOST || '0.0.0.0';
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(ROOT, 'data'));
 const SESSION_HOURS = Math.max(1, Number(process.env.SESSION_HOURS || 168));
-const APP_TIMEZONE = process.env.APP_TIMEZONE || 'Asia/Shanghai';
-const AUTO_REDEEM = !/^(0|false|no|off)$/i.test(process.env.AUTO_REDEEM || 'true');
-const AUTO_REDEEM_HOUR = clamp(process.env.AUTO_REDEEM_HOUR, 0, 23, 12);
-const AUTO_REDEEM_MINUTE = clamp(process.env.AUTO_REDEEM_MINUTE, 0, 59, 0);
+const defaultRedeemDelay = parseRange(process.env.REDEEM_DELAY_MS || '4500-12000');
+const defaultActionDelay = parseRange(process.env.ACTION_DELAY_MS || '800-2200');
+const AUTOMATION_DEFAULTS = {
+    enabled: !/^(0|false|no|off)$/i.test(process.env.AUTO_REDEEM || 'true'),
+    scheduleTime: `${String(clamp(process.env.AUTO_REDEEM_HOUR, 0, 23, 12)).padStart(2, '0')}:${String(clamp(process.env.AUTO_REDEEM_MINUTE, 0, 59, 0)).padStart(2, '0')}`,
+    timezone: process.env.APP_TIMEZONE || 'Asia/Shanghai',
+    redeemDelayMinMs: defaultRedeemDelay.min,
+    redeemDelayMaxMs: defaultRedeemDelay.max,
+    actionDelayMinMs: defaultActionDelay.min,
+    actionDelayMaxMs: defaultActionDelay.max
+};
 
 const db = new AppDatabase(path.join(DATA_DIR, 'swcoupon.sqlite'));
 const createdAdmin = db.initializeAdmin(process.env.ADMIN_USERNAME || 'admin', process.env.ADMIN_PASSWORD);
@@ -32,6 +39,7 @@ function startJob(accountId, triggerType) {
     jobState.progress = { fetched: 0, success: 0, skipped: 0, failed: 0 };
     jobState.error = null;
     jobState.startedAt = new Date().toISOString();
+    const automation = db.getAutomationConfig(AUTOMATION_DEFAULTS);
     setImmediate(async () => {
         let jobError = null;
         try {
@@ -39,8 +47,8 @@ function startJob(accountId, triggerType) {
                 db, accountId, triggerType,
                 options: {
                     pageTimeoutMs: Math.max(5000, Number(process.env.PAGE_TIMEOUT_MS || 30000)),
-                    redeemDelayMs: parseRange(process.env.REDEEM_DELAY_MS || '4500-12000'),
-                    actionDelayMs: parseRange(process.env.ACTION_DELAY_MS || '800-2200')
+                    redeemDelayMs: { min: automation.redeemDelayMinMs, max: automation.redeemDelayMaxMs },
+                    actionDelayMs: { min: automation.actionDelayMinMs, max: automation.actionDelayMaxMs }
                 },
                 hooks: {
                     onStart: ({ jobId, summary }) => Object.assign(jobState, { jobId, progress: { ...summary } }),
@@ -53,20 +61,20 @@ function startJob(accountId, triggerType) {
             jobState.error = error.message;
             console.error('Redemption job failed:', error.stack || error.message);
         } finally {
-            await sendJobNotification(triggerType, jobError);
+            await sendJobNotification(triggerType, jobError, automation.timezone);
             jobState.running = false;
         }
     });
     return true;
 }
 
-async function sendJobNotification(triggerType, error) {
+async function sendJobNotification(triggerType, error, timezone) {
     const telegram = db.getTelegramConfig();
     if (!telegram.enabled) return;
     try {
         await sendTelegramMessage(telegram, buildJobMessage({
             summary: jobState.progress || {}, triggerType, error,
-            startedAt: jobState.startedAt, timezone: APP_TIMEZONE
+            startedAt: jobState.startedAt, timezone
         }));
     } catch (notificationError) {
         console.warn(`Telegram notification failed: ${notificationError.message}`);
@@ -82,7 +90,7 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
         console.error(error.stack || error.message);
         const isConflict = String(error.code || '').includes('SQLITE_CONSTRAINT_UNIQUE');
-        const status = error.statusCode || (isConflict ? 409 : /必填|无效|至少|不能超过|格式|用户名|密码|不一致|请填写|Telegram/.test(error.message) ? 400 : 500);
+        const status = error.statusCode || (isConflict ? 409 : /必填|无效|至少|不能超过|格式|用户名|密码|不一致|请填写|Telegram|时间|时区|延迟/.test(error.message) ? 400 : 500);
         json(res, status, { error: status === 500 ? '服务器内部错误' : isConflict ? '相同 Hive ID 和服务器的账号已存在' : error.message });
     }
 });
@@ -146,6 +154,22 @@ async function handleApi(req, res, url) {
     if (req.method === 'GET' && url.pathname === '/api/dashboard') {
         return json(res, 200, { ...db.dashboard(), job: publicJobState() });
     }
+    if (req.method === 'GET' && url.pathname === '/api/automation') {
+        return json(res, 200, publicAutomationConfig(db.getAutomationConfig(AUTOMATION_DEFAULTS)));
+    }
+    if (req.method === 'PUT' && url.pathname === '/api/automation') {
+        const body = await readJson(req);
+        const config = db.saveAutomationConfig({
+            enabled: body.enabled,
+            scheduleTime: body.scheduleTime,
+            timezone: body.timezone,
+            redeemDelayMinMs: secondsToMilliseconds(body.redeemDelayMinSeconds, '兑换随机延迟'),
+            redeemDelayMaxMs: secondsToMilliseconds(body.redeemDelayMaxSeconds, '兑换随机延迟'),
+            actionDelayMinMs: secondsToMilliseconds(body.actionDelayMinSeconds, '页面操作随机延迟'),
+            actionDelayMaxMs: secondsToMilliseconds(body.actionDelayMaxSeconds, '页面操作随机延迟')
+        }, AUTOMATION_DEFAULTS);
+        return json(res, 200, publicAutomationConfig(config));
+    }
     if (req.method === 'GET' && url.pathname === '/api/telegram') {
         return json(res, 200, publicTelegramConfig(db.getTelegramConfig()));
     }
@@ -163,7 +187,8 @@ async function handleApi(req, res, url) {
         };
         validateTelegramConfig(config, true);
         try {
-            await sendTelegramMessage(config, `✅ SW Coupon Console 测试消息\n\nTelegram 推送配置正确。\n时间：${new Intl.DateTimeFormat('zh-CN', { timeZone: APP_TIMEZONE, dateStyle: 'medium', timeStyle: 'medium', hour12: false }).format(new Date())}`);
+            const timezone = db.getAutomationConfig(AUTOMATION_DEFAULTS).timezone;
+            await sendTelegramMessage(config, `✅ SW Coupon Console 测试消息\n\nTelegram 推送配置正确。\n时间：${new Intl.DateTimeFormat('zh-CN', { timeZone: timezone, dateStyle: 'medium', timeStyle: 'medium', hour12: false }).format(new Date())}`);
         } catch (error) {
             return json(res, 502, { error: error.message });
         }
@@ -205,6 +230,18 @@ function publicJobState() {
 
 function publicTelegramConfig(config) {
     return { enabled: config.enabled, chatId: config.chatId, hasBotToken: Boolean(config.botToken) };
+}
+
+function publicAutomationConfig(config) {
+    return {
+        enabled: config.enabled,
+        scheduleTime: config.scheduleTime,
+        timezone: config.timezone,
+        redeemDelayMinSeconds: config.redeemDelayMinMs / 1000,
+        redeemDelayMaxSeconds: config.redeemDelayMaxMs / 1000,
+        actionDelayMinSeconds: config.actionDelayMinMs / 1000,
+        actionDelayMaxSeconds: config.actionDelayMaxMs / 1000
+    };
 }
 
 function serveStatic(req, res, pathname) {
@@ -281,23 +318,31 @@ function parseRange(value) {
     return { min: Math.min(Number(match[1]), Number(match[2])), max: Math.max(Number(match[1]), Number(match[2])) };
 }
 
+function secondsToMilliseconds(value, label) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) throw new Error(`${label}格式无效`);
+    return number * 1000;
+}
+
 function clamp(value, min, max, fallback) {
     const number = Number(value);
     return Number.isInteger(number) && number >= min && number <= max ? number : fallback;
 }
 
-function localTimeParts(date = new Date()) {
+function localTimeParts(date = new Date(), timezone = AUTOMATION_DEFAULTS.timezone) {
     const parts = new Intl.DateTimeFormat('en-CA', {
-        timeZone: APP_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+        timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
     }).formatToParts(date);
     return Object.fromEntries(parts.map((part) => [part.type, part.value]));
 }
 
 function checkSchedule() {
-    if (!AUTO_REDEEM || jobState.running) return;
-    const now = localTimeParts();
+    const automation = db.getAutomationConfig(AUTOMATION_DEFAULTS);
+    if (!automation.enabled || jobState.running) return;
+    const now = localTimeParts(new Date(), automation.timezone);
     const dateKey = `${now.year}-${now.month}-${now.day}`;
-    if (Number(now.hour) === AUTO_REDEEM_HOUR && Number(now.minute) === AUTO_REDEEM_MINUTE && lastScheduledDate !== dateKey) {
+    const [hour, minute] = automation.scheduleTime.split(':').map(Number);
+    if (Number(now.hour) === hour && Number(now.minute) === minute && lastScheduledDate !== dateKey) {
         lastScheduledDate = dateKey;
         if (db.listAccounts(true).length && startJob(null, 'schedule')) console.log(`Scheduled redemption started for ${dateKey}.`);
     }
@@ -308,9 +353,10 @@ scheduleTimer.unref();
 checkSchedule();
 
 server.listen(PORT, HOST, () => {
+    const automation = db.getAutomationConfig(AUTOMATION_DEFAULTS);
     console.log(`SW Coupon Console listening on http://${HOST}:${PORT}`);
-    console.log(AUTO_REDEEM
-        ? `Automatic redemption: ${String(AUTO_REDEEM_HOUR).padStart(2, '0')}:${String(AUTO_REDEEM_MINUTE).padStart(2, '0')} (${APP_TIMEZONE})`
+    console.log(automation.enabled
+        ? `Automatic redemption: ${automation.scheduleTime} (${automation.timezone})`
         : 'Automatic redemption is disabled.');
 });
 

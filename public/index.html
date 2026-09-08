@@ -38,6 +38,7 @@
                 <button data-page="dashboard" class="nav-item active"><span>◫</span>总览</button>
                 <button data-page="accounts" class="nav-item"><span>◎</span>兑换账号</button>
                 <button data-page="records" class="nav-item"><span>≡</span>兑换记录</button>
+                <button data-page="automation" class="nav-item"><span>◷</span>运行设置</button>
                 <button data-page="telegram" class="nav-item"><span>△</span>Telegram 推送</button>
                 <button data-page="security" class="nav-item"><span>◇</span>安全设置</button>
             </nav>
@@ -95,6 +96,48 @@
                         </div>
                         <div id="recordTable"></div>
                         <div id="pagination" class="pagination"></div>
+                    </article>
+                </section>
+
+                <section id="page-automation" class="page">
+                    <article class="panel narrow-panel">
+                        <div class="panel-head">
+                            <div><p class="eyebrow">AUTOMATION</p><h3>自动兑换与随机延迟</h3></div>
+                            <span id="automationStatus" class="status neutral">读取中</span>
+                        </div>
+                        <p class="muted">设置保存后立即生效，无需重启容器。正在执行的任务会继续使用启动时的延迟设置。</p>
+                        <form id="automationForm" class="stack">
+                            <label class="switch-row">
+                                <span><strong>启用每日自动兑换</strong><small>到达指定时间后兑换所有已启用账号</small></span>
+                                <input name="enabled" type="checkbox">
+                            </label>
+                            <div class="field-grid">
+                                <label>每日兑换时间<input name="scheduleTime" type="time" required></label>
+                                <label>时区
+                                    <input name="timezone" list="timezoneOptions" required placeholder="Asia/Shanghai">
+                                    <datalist id="timezoneOptions">
+                                        <option value="Asia/Shanghai"></option><option value="Asia/Tokyo"></option>
+                                        <option value="Asia/Seoul"></option><option value="UTC"></option>
+                                        <option value="Europe/Berlin"></option><option value="America/New_York"></option>
+                                    </datalist>
+                                </label>
+                            </div>
+                            <div>
+                                <p class="field-title">兑换码之间随机延迟</p>
+                                <div class="field-grid">
+                                    <label>最少秒数<input name="redeemDelayMinSeconds" type="number" min="0" max="300" step="0.1" required></label>
+                                    <label>最多秒数<input name="redeemDelayMaxSeconds" type="number" min="0" max="300" step="0.1" required></label>
+                                </div>
+                            </div>
+                            <div>
+                                <p class="field-title">检查账号至确认兑换随机延迟</p>
+                                <div class="field-grid">
+                                    <label>最少秒数<input name="actionDelayMinSeconds" type="number" min="0" max="30" step="0.1" required></label>
+                                    <label>最多秒数<input name="actionDelayMaxSeconds" type="number" min="0" max="30" step="0.1" required></label>
+                                </div>
+                            </div>
+                            <button class="button primary" type="submit">保存运行设置</button>
+                        </form>
                     </article>
                 </section>
 

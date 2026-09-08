@@ -47,6 +47,27 @@ test('stores Telegram configuration without discarding an existing token', (t) =
     assert.throws(() => db.saveTelegramConfig({ clearToken: true, chatId: '', enabled: true }), /Bot Token/);
 });
 
+test('stores and validates automation schedule and random delays', (t) => {
+    const db = database(t);
+    const defaults = {
+        enabled: true, scheduleTime: '12:00', timezone: 'Asia/Shanghai',
+        redeemDelayMinMs: 4500, redeemDelayMaxMs: 12000,
+        actionDelayMinMs: 800, actionDelayMaxMs: 2200
+    };
+    assert.deepEqual(db.getAutomationConfig(defaults), defaults);
+    const saved = db.saveAutomationConfig({
+        enabled: false, scheduleTime: '23:35', timezone: 'UTC',
+        redeemDelayMinMs: 2000, redeemDelayMaxMs: 7000,
+        actionDelayMinMs: 300, actionDelayMaxMs: 900
+    }, defaults);
+    assert.equal(saved.scheduleTime, '23:35');
+    assert.equal(saved.timezone, 'UTC');
+    assert.equal(saved.redeemDelayMaxMs, 7000);
+    assert.equal(db.getAutomationConfig(defaults).enabled, false);
+    assert.throws(() => db.saveAutomationConfig({ redeemDelayMinMs: 9000, redeemDelayMaxMs: 1000 }, defaults), /最小值/);
+    assert.throws(() => db.saveAutomationConfig({ timezone: 'Not\/A-Timezone' }, defaults), /时区/);
+});
+
 test('manages accounts and keeps record snapshots after deletion', (t) => {
     const db = database(t);
     const account = db.createAccount({ name: '主账号', hiveId: 'player-1', server: 'china', enabled: true });
