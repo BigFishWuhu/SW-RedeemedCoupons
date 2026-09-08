@@ -175,7 +175,7 @@ function serveStatic(req, res, pathname) {
         }
         res.statusCode = 200;
         res.setHeader('Content-Type', contentType(filename));
-        res.setHeader('Cache-Control', filename.endsWith('index.html') ? 'no-cache' : 'public, max-age=3600');
+        res.setHeader('Cache-Control', 'no-cache');
         res.end(req.method === 'HEAD' ? undefined : content);
     });
 }

@@ -1,7 +1,7 @@
 services:
   swcoupon:
-    image: ${IMAGE_NAME:-sw-redeemed-coupons:latest}
-    build: .
+    image: ghcr.io/bigfishwuhu/sw-redeemedcoupons:latest
+    pull_policy: always
     container_name: swcoupon
     restart: unless-stopped
     ports:

@@ -48,12 +48,13 @@ function bindEvents() {
 
 async function login(event) {
     event.preventDefault();
+    const form = event.currentTarget;
     $('#authError').textContent = '';
-    const body = Object.fromEntries(new FormData(event.currentTarget));
+    const body = Object.fromEntries(new FormData(form));
     try {
         const { user } = await api('/api/login', { method: 'POST', body: JSON.stringify(body) });
         state.user = user;
-        event.currentTarget.reset();
+        form.reset();
         showApp();
         await loadAll();
     } catch (error) { $('#authError').textContent = error.message; }
@@ -61,8 +62,9 @@ async function login(event) {
 
 async function setupAdmin(event) {
     event.preventDefault();
+    const form = event.currentTarget;
     $('#authError').textContent = '';
-    const body = Object.fromEntries(new FormData(event.currentTarget));
+    const body = Object.fromEntries(new FormData(form));
     if (body.password !== body.confirmPassword) {
         $('#authError').textContent = '两次输入的密码不一致';
         return;
@@ -70,7 +72,7 @@ async function setupAdmin(event) {
     try {
         const { user } = await api('/api/setup', { method: 'POST', body: JSON.stringify(body) });
         state.user = user;
-        event.currentTarget.reset();
+        form.reset();
         showApp();
         await loadAll();
         toast('管理员创建成功');

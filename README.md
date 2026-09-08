@@ -14,46 +14,7 @@
 
 ## Docker Compose 部署
 
-需要安装 Docker 与 Docker Compose。克隆仓库后可以直接使用仓库内的 `compose.yaml`：
-
-```bash
-git clone https://github.com/BigFishWuhu/SW-RedeemedCoupons.git
-cd SW-RedeemedCoupons
-docker compose up -d --build
-```
-
-对应的 Compose 配置如下，可直接保存为 `compose.yaml`：
-
-```yaml
-services:
-  swcoupon:
-    build: .
-    image: sw-redeemed-coupons:latest
-    container_name: swcoupon
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    volumes:
-      - swcoupon-data:/app/data
-    shm_size: 1gb
-
-volumes:
-  swcoupon-data:
-```
-
-访问 `http://服务器地址:3000`。首次访问会显示初始化向导，在页面中创建管理员用户名和密码，创建完成后自动登录。
-
-SQLite 数据库存放在名为 `swcoupon-data` 的 Docker volume 中，更新或重建容器不会丢失。以后访问会直接显示登录页；管理员密码可在“安全设置”中修改。
-
-## 使用 GitHub 发布的镜像
-
-仓库的 [Docker workflow](.github/workflows/docker-image.yml) 会在推送到 `main`、推送 `v*` 标签或手动触发时，将镜像发布到：
-
-```text
-ghcr.io/<GitHub 用户或组织>/<仓库名>:latest
-```
-
-如果不想在 VPS 上构建镜像，可以使用下面的 `compose.yaml` 直接部署本仓库发布的 GHCR 镜像：
+需要安装 Docker 与 Docker Compose。在 VPS 上创建一个空目录，将下面的内容保存为 `compose.yaml`。该配置直接使用 GitHub GHCR 镜像，不需要克隆源码，也不会在 VPS 上构建镜像：
 
 ```yaml
 services:
@@ -78,6 +39,10 @@ volumes:
 docker compose up -d
 ```
 
+访问 `http://服务器地址:3000`。首次访问会显示初始化向导，在页面中创建管理员用户名和密码，创建完成后自动登录。
+
+SQLite 数据库存放在名为 `swcoupon-data` 的 Docker volume 中，更新或重建容器不会丢失。以后访问会直接显示登录页；管理员密码可在“安全设置”中修改。
+
 更新到最新镜像：
 
 ```bash
@@ -85,9 +50,7 @@ docker compose pull
 docker compose up -d
 ```
 
-如果 GHCR package 是私有的，先执行 `docker login ghcr.io`。也可以在 GitHub package 设置中将镜像改为 Public。
-
-两个示例均使用默认配置，不需要创建 `.env`。如需修改端口、定时兑换时间或其他选项，可在 `environment` 中加入下方配置项。
+该 GHCR 镜像已设置为公开，可匿名拉取，不需要执行 `docker login`。默认配置也不需要创建 `.env`。如需修改端口、定时兑换时间或其他选项，可在 `environment` 中加入下方配置项。
 
 ## 配置项
 
