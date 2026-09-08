@@ -38,6 +38,7 @@
                 <button data-page="dashboard" class="nav-item active"><span>◫</span>总览</button>
                 <button data-page="accounts" class="nav-item"><span>◎</span>兑换账号</button>
                 <button data-page="records" class="nav-item"><span>≡</span>兑换记录</button>
+                <button data-page="telegram" class="nav-item"><span>△</span>Telegram 推送</button>
                 <button data-page="security" class="nav-item"><span>◇</span>安全设置</button>
             </nav>
             <div class="sidebar-footer">
@@ -94,6 +95,34 @@
                         </div>
                         <div id="recordTable"></div>
                         <div id="pagination" class="pagination"></div>
+                    </article>
+                </section>
+
+                <section id="page-telegram" class="page">
+                    <article class="panel narrow-panel">
+                        <div class="panel-head">
+                            <div><p class="eyebrow">NOTIFICATIONS</p><h3>Telegram Bot 推送</h3></div>
+                            <span id="telegramStatus" class="status neutral">未配置</span>
+                        </div>
+                        <p class="muted">兑换任务结束后，将成功、跳过、失败数量推送到指定聊天。Bot Token 只保存在 SQLite 中，不会回显到浏览器。</p>
+                        <form id="telegramForm" class="stack">
+                            <label>Bot Token
+                                <input name="botToken" type="password" autocomplete="off" placeholder="从 @BotFather 获取；留空保留已保存值">
+                            </label>
+                            <label>Chat ID
+                                <input name="chatId" autocomplete="off" placeholder="例如 123456789 或 -1001234567890">
+                            </label>
+                            <label class="switch-row">
+                                <span><strong>启用任务推送</strong><small>手动和定时兑换结束后自动发送</small></span>
+                                <input name="enabled" type="checkbox">
+                            </label>
+                            <p class="muted telegram-help">先向你的 Bot 发送一条消息，再访问 Telegram Bot API 的 <code>getUpdates</code> 可找到 Chat ID。</p>
+                            <div class="settings-actions">
+                                <button class="button primary" type="submit">保存配置</button>
+                                <button id="testTelegramButton" class="button secondary" type="button">发送测试消息</button>
+                                <button id="clearTelegramButton" class="text-button danger" type="button">清除配置</button>
+                            </div>
+                        </form>
                     </article>
                 </section>
 

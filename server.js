@@ -1,8 +1,9 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
-const { AppDatabase } = require('./lib/database');
+const { AppDatabase, validateTelegramConfig } = require('./lib/database');
 const { runRedemption } = require('./lib/redeemer');
+const { sendTelegramMessage, buildJobMessage } = require('./lib/telegram');
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -32,6 +33,7 @@ function startJob(accountId, triggerType) {
     jobState.error = null;
     jobState.startedAt = new Date().toISOString();
     setImmediate(async () => {
+        let jobError = null;
         try {
             await runRedemption({
                 db, accountId, triggerType,
@@ -47,13 +49,28 @@ function startJob(accountId, triggerType) {
                 }
             });
         } catch (error) {
+            jobError = error.message;
             jobState.error = error.message;
             console.error('Redemption job failed:', error.stack || error.message);
         } finally {
+            await sendJobNotification(triggerType, jobError);
             jobState.running = false;
         }
     });
     return true;
+}
+
+async function sendJobNotification(triggerType, error) {
+    const telegram = db.getTelegramConfig();
+    if (!telegram.enabled) return;
+    try {
+        await sendTelegramMessage(telegram, buildJobMessage({
+            summary: jobState.progress || {}, triggerType, error,
+            startedAt: jobState.startedAt, timezone: APP_TIMEZONE
+        }));
+    } catch (notificationError) {
+        console.warn(`Telegram notification failed: ${notificationError.message}`);
+    }
 }
 
 const server = http.createServer(async (req, res) => {
@@ -65,7 +82,7 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
         console.error(error.stack || error.message);
         const isConflict = String(error.code || '').includes('SQLITE_CONSTRAINT_UNIQUE');
-        const status = error.statusCode || (isConflict ? 409 : /必填|无效|至少|不能超过|格式|用户名|密码|不一致/.test(error.message) ? 400 : 500);
+        const status = error.statusCode || (isConflict ? 409 : /必填|无效|至少|不能超过|格式|用户名|密码|不一致|请填写|Telegram/.test(error.message) ? 400 : 500);
         json(res, status, { error: status === 500 ? '服务器内部错误' : isConflict ? '相同 Hive ID 和服务器的账号已存在' : error.message });
     }
 });
@@ -129,6 +146,29 @@ async function handleApi(req, res, url) {
     if (req.method === 'GET' && url.pathname === '/api/dashboard') {
         return json(res, 200, { ...db.dashboard(), job: publicJobState() });
     }
+    if (req.method === 'GET' && url.pathname === '/api/telegram') {
+        return json(res, 200, publicTelegramConfig(db.getTelegramConfig()));
+    }
+    if (req.method === 'PUT' && url.pathname === '/api/telegram') {
+        const config = db.saveTelegramConfig(await readJson(req));
+        return json(res, 200, publicTelegramConfig(config));
+    }
+    if (req.method === 'POST' && url.pathname === '/api/telegram/test') {
+        const body = await readJson(req);
+        const saved = db.getTelegramConfig();
+        const config = {
+            botToken: String(body.botToken || '').trim() || saved.botToken,
+            chatId: body.chatId === undefined ? saved.chatId : String(body.chatId || '').trim(),
+            enabled: true
+        };
+        validateTelegramConfig(config, true);
+        try {
+            await sendTelegramMessage(config, `✅ SW Coupon Console 测试消息\n\nTelegram 推送配置正确。\n时间：${new Intl.DateTimeFormat('zh-CN', { timeZone: APP_TIMEZONE, dateStyle: 'medium', timeStyle: 'medium', hour12: false }).format(new Date())}`);
+        } catch (error) {
+            return json(res, 502, { error: error.message });
+        }
+        return json(res, 200, { ok: true });
+    }
     if (req.method === 'GET' && url.pathname === '/api/accounts') return json(res, 200, { items: db.listAccounts() });
     if (req.method === 'POST' && url.pathname === '/api/accounts') {
         const account = db.createAccount(await readJson(req));
@@ -161,6 +201,10 @@ async function handleApi(req, res, url) {
 
 function publicJobState() {
     return { running: jobState.running, jobId: jobState.jobId, progress: jobState.progress, error: jobState.error, startedAt: jobState.startedAt };
+}
+
+function publicTelegramConfig(config) {
+    return { enabled: config.enabled, chatId: config.chatId, hasBotToken: Boolean(config.botToken) };
 }
 
 function serveStatic(req, res, pathname) {

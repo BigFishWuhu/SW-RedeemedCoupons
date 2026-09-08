@@ -9,6 +9,7 @@
 - 一键兑换全部账号，或只兑换指定账号
 - 每日定时自动兑换（默认北京时间 12:00）
 - 查询和筛选兑换记录、Hive 返回信息与任务状态
+- Telegram Bot 任务结果推送与测试消息
 - 已成功或已确认兑换的礼包码自动跳过，失败记录下次可重试
 - Docker Compose 部署，GitHub Actions 自动发布 GHCR 镜像
 
@@ -51,6 +52,18 @@ docker compose up -d
 ```
 
 该 GHCR 镜像已设置为公开，可匿名拉取，不需要执行 `docker login`。默认配置也不需要创建 `.env`。如需修改端口、定时兑换时间或其他选项，可在 `environment` 中加入下方配置项。
+
+## Telegram Bot 推送
+
+Telegram 推送通过 Web 后台配置，不需要修改 Compose 环境变量：
+
+1. 在 Telegram 中联系 `@BotFather`，使用 `/newbot` 创建机器人并取得 Bot Token。
+2. 先给新机器人发送一条消息。
+3. 通过 Bot API 的 `getUpdates` 获取目标对话的 Chat ID；群组 Chat ID 通常以 `-` 开头。
+4. 登录控制台，进入“Telegram 推送”，填写 Bot Token 和 Chat ID。
+5. 点击“发送测试消息”，确认收到后启用任务推送并保存。
+
+启用后，手动任务和定时任务结束时都会推送发现兑换码、成功、跳过、失败数量以及致命错误。Bot Token 只保存在 SQLite 中，接口不会将原 Token 返回给浏览器。
 
 ## 配置项
 

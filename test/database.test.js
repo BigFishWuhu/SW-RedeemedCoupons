@@ -35,6 +35,18 @@ test('creates the first administrator interactively only once', (t) => {
     assert.throws(() => db.createInitialAdmin('second', 'another-password'), /已经创建/);
 });
 
+test('stores Telegram configuration without discarding an existing token', (t) => {
+    const db = database(t);
+    const token = '123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcd';
+    const saved = db.saveTelegramConfig({ botToken: token, chatId: '-1001234567890', enabled: true });
+    assert.deepEqual(saved, { botToken: token, chatId: '-1001234567890', enabled: true });
+    const updated = db.saveTelegramConfig({ botToken: '', chatId: '987654321', enabled: false });
+    assert.equal(updated.botToken, token);
+    assert.equal(updated.chatId, '987654321');
+    assert.equal(db.getTelegramConfig().enabled, false);
+    assert.throws(() => db.saveTelegramConfig({ clearToken: true, chatId: '', enabled: true }), /Bot Token/);
+});
+
 test('manages accounts and keeps record snapshots after deletion', (t) => {
     const db = database(t);
     const account = db.createAccount({ name: '主账号', hiveId: 'player-1', server: 'china', enabled: true });

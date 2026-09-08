@@ -1,7 +1,7 @@
 const state = { user: null, accounts: [], recordPage: 1, poller: null };
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
-const pageTitles = { dashboard: '运行总览', accounts: '兑换账号', records: '兑换记录', security: '安全设置' };
+const pageTitles = { dashboard: '运行总览', accounts: '兑换账号', records: '兑换记录', telegram: 'Telegram 推送', security: '安全设置' };
 const serverNames = { china: '中国服', global: '全球服', asia: '亚洲服', europe: '欧洲服', korea: '韩国服', japan: '日本服' };
 const statusNames = { redeemed: '兑换成功', 'already-redeemed': '此前已兑换', failed: '兑换失败' };
 
@@ -37,6 +37,9 @@ function bindEvents() {
     $('#redeemAllButton').addEventListener('click', () => redeem());
     $('#addAccountButton').addEventListener('click', () => openAccount());
     $('#accountForm').addEventListener('submit', saveAccount);
+    $('#telegramForm').addEventListener('submit', saveTelegram);
+    $('#testTelegramButton').addEventListener('click', testTelegram);
+    $('#clearTelegramButton').addEventListener('click', clearTelegram);
     $('#passwordForm').addEventListener('submit', changePassword);
     $('#filterButton').addEventListener('click', () => { state.recordPage = 1; loadRecords(); });
     $('#recordQuery').addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); state.recordPage = 1; loadRecords(); } });
@@ -116,7 +119,7 @@ function showApp() {
 
 async function loadAll() {
     await loadAccounts();
-    await Promise.all([loadDashboard(), loadRecords(), loadRecentRecords()]);
+    await Promise.all([loadDashboard(), loadRecords(), loadRecentRecords(), loadTelegram()]);
 }
 
 function go(page) {
@@ -284,6 +287,59 @@ async function changePassword(event) {
         await api('/api/password', { method: 'POST', body: JSON.stringify(values) });
         toast('密码已更新，请重新登录');
         setTimeout(showLogin, 700);
+    } catch (error) { toast(error.message, true); }
+}
+
+async function loadTelegram() {
+    try {
+        renderTelegram(await api('/api/telegram'));
+    } catch (error) { toast(error.message, true); }
+}
+
+function renderTelegram(config) {
+    const form = $('#telegramForm');
+    form.elements.botToken.value = '';
+    form.elements.botToken.placeholder = config.hasBotToken ? '已保存；留空表示不修改' : '从 @BotFather 获取 Bot Token';
+    form.elements.chatId.value = config.chatId || '';
+    form.elements.enabled.checked = config.enabled;
+    const status = $('#telegramStatus');
+    status.className = `status ${config.enabled ? 'success' : config.hasBotToken ? 'warning' : 'neutral'}`;
+    status.textContent = config.enabled ? '已启用' : config.hasBotToken ? '已配置，未启用' : '未配置';
+}
+
+async function saveTelegram(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const body = Object.fromEntries(new FormData(form));
+    body.enabled = form.elements.enabled.checked;
+    try {
+        const config = await api('/api/telegram', { method: 'PUT', body: JSON.stringify(body) });
+        renderTelegram(config);
+        toast('Telegram 推送配置已保存');
+    } catch (error) { toast(error.message, true); }
+}
+
+async function testTelegram() {
+    const form = $('#telegramForm');
+    const body = Object.fromEntries(new FormData(form));
+    const button = $('#testTelegramButton');
+    button.disabled = true;
+    button.textContent = '发送中…';
+    try {
+        await api('/api/telegram/test', { method: 'POST', body: JSON.stringify(body) });
+        toast('Telegram 测试消息已发送');
+    } catch (error) { toast(error.message, true); }
+    finally { button.disabled = false; button.textContent = '发送测试消息'; }
+}
+
+async function clearTelegram() {
+    if (!confirm('确定清除已保存的 Telegram Bot Token 和 Chat ID 吗？')) return;
+    try {
+        const config = await api('/api/telegram', {
+            method: 'PUT', body: JSON.stringify({ clearToken: true, chatId: '', enabled: false })
+        });
+        renderTelegram(config);
+        toast('Telegram 推送配置已清除');
     } catch (error) { toast(error.message, true); }
 }
 
