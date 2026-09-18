@@ -2,7 +2,8 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { AppDatabase, validateTelegramConfig } = require('./lib/database');
-const { runRedemption } = require('./lib/redeemer');
+const { runRedemption, fetchCoupons } = require('./lib/redeemer');
+const { checkForNewCoupons } = require('./lib/coupon-checker');
 const { sendTelegramMessage, buildJobMessage } = require('./lib/telegram');
 
 const ROOT = __dirname;
@@ -14,13 +15,14 @@ const SESSION_HOURS = Math.max(1, Number(process.env.SESSION_HOURS || 168));
 const defaultRedeemDelay = parseRange(process.env.REDEEM_DELAY_MS || '4500-12000');
 const defaultActionDelay = parseRange(process.env.ACTION_DELAY_MS || '800-2200');
 const AUTOMATION_DEFAULTS = {
-    enabled: !/^(0|false|no|off)$/i.test(process.env.AUTO_REDEEM || 'true'),
+    enabled: envBoolean(process.env.COUPON_CHECK_ENABLED, envBoolean(process.env.AUTO_REDEEM, true)),
     scheduleTime: `${String(clamp(process.env.AUTO_REDEEM_HOUR, 0, 23, 12)).padStart(2, '0')}:${String(clamp(process.env.AUTO_REDEEM_MINUTE, 0, 59, 0)).padStart(2, '0')}`,
     timezone: process.env.APP_TIMEZONE || 'Asia/Shanghai',
     redeemDelayMinMs: defaultRedeemDelay.min,
     redeemDelayMaxMs: defaultRedeemDelay.max,
     actionDelayMinMs: defaultActionDelay.min,
-    actionDelayMaxMs: defaultActionDelay.max
+    actionDelayMaxMs: defaultActionDelay.max,
+    intervalHours: clamp(process.env.COUPON_CHECK_HOURS, 1, 168, 1)
 };
 
 const db = new AppDatabase(path.join(DATA_DIR, 'swcoupon.sqlite'));
@@ -28,17 +30,20 @@ const createdAdmin = db.initializeAdmin(process.env.ADMIN_USERNAME || 'admin', p
 if (createdAdmin) console.log(`Administrator "${process.env.ADMIN_USERNAME || 'admin'}" created.`);
 else if (db.needsSetup()) console.log('No administrator exists. Open the web console to create the initial account.');
 
-const jobState = { running: false, jobId: null, progress: null, error: null, startedAt: null };
+const jobState = { running: false, jobId: null, progress: null, error: null, startedAt: null, triggerType: null, couponCodes: null };
+const couponCheckState = { running: false, nextCheckAt: null };
 const loginAttempts = new Map();
-let lastScheduledDate = null;
+let activeIntervalHours = null;
 
-function startJob(accountId, triggerType) {
-    if (jobState.running) return false;
+function startJob(accountId, triggerType, preloadedCoupons = null, fromCouponCheck = false) {
+    if (jobState.running || (couponCheckState.running && !fromCouponCheck)) return false;
     jobState.running = true;
     jobState.jobId = null;
     jobState.progress = { fetched: 0, success: 0, skipped: 0, failed: 0 };
     jobState.error = null;
     jobState.startedAt = new Date().toISOString();
+    jobState.triggerType = triggerType;
+    jobState.couponCodes = preloadedCoupons;
     const automation = db.getAutomationConfig(AUTOMATION_DEFAULTS);
     setImmediate(async () => {
         let jobError = null;
@@ -48,7 +53,8 @@ function startJob(accountId, triggerType) {
                 options: {
                     pageTimeoutMs: Math.max(5000, Number(process.env.PAGE_TIMEOUT_MS || 30000)),
                     redeemDelayMs: { min: automation.redeemDelayMinMs, max: automation.redeemDelayMaxMs },
-                    actionDelayMs: { min: automation.actionDelayMinMs, max: automation.actionDelayMaxMs }
+                    actionDelayMs: { min: automation.actionDelayMinMs, max: automation.actionDelayMaxMs },
+                    ...(preloadedCoupons ? { fetchCoupons: async () => preloadedCoupons } : {})
                 },
                 hooks: {
                     onStart: ({ jobId, summary }) => Object.assign(jobState, { jobId, progress: { ...summary } }),
@@ -68,13 +74,29 @@ function startJob(accountId, triggerType) {
     return true;
 }
 
+function startCouponCheck(triggerType) {
+    if (couponCheckState.running || jobState.running) return false;
+    couponCheckState.running = true;
+    setImmediate(async () => {
+        try {
+            const result = await checkForNewCoupons({ db, fetchCoupons, triggerType });
+            if (result.pendingCodes.length) startJob(null, 'interval', result.pendingCodes, true);
+        } catch (error) {
+            console.warn(`Coupon check failed: ${error.message}`);
+        } finally {
+            couponCheckState.running = false;
+        }
+    });
+    return true;
+}
+
 async function sendJobNotification(triggerType, error, timezone) {
     const telegram = db.getTelegramConfig();
     if (!telegram.enabled) return;
     try {
         await sendTelegramMessage(telegram, buildJobMessage({
             summary: jobState.progress || {}, triggerType, error,
-            startedAt: jobState.startedAt, timezone
+            startedAt: jobState.startedAt, timezone, couponCodes: jobState.couponCodes || []
         }));
     } catch (notificationError) {
         console.warn(`Telegram notification failed: ${notificationError.message}`);
@@ -90,7 +112,7 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
         console.error(error.stack || error.message);
         const isConflict = String(error.code || '').includes('SQLITE_CONSTRAINT_UNIQUE');
-        const status = error.statusCode || (isConflict ? 409 : /必填|无效|至少|不能超过|格式|用户名|密码|不一致|请填写|Telegram|时间|时区|延迟/.test(error.message) ? 400 : 500);
+        const status = error.statusCode || (isConflict ? 409 : /必填|无效|有效期|至少|不能超过|格式|用户名|密码|不一致|请填写|Telegram|时间|时区|延迟/.test(error.message) ? 400 : 500);
         json(res, status, { error: status === 500 ? '服务器内部错误' : isConflict ? '相同 Hive ID 和服务器的账号已存在' : error.message });
     }
 });
@@ -161,14 +183,23 @@ async function handleApi(req, res, url) {
         const body = await readJson(req);
         const config = db.saveAutomationConfig({
             enabled: body.enabled,
-            scheduleTime: body.scheduleTime,
             timezone: body.timezone,
             redeemDelayMinMs: secondsToMilliseconds(body.redeemDelayMinSeconds, '兑换随机延迟'),
             redeemDelayMaxMs: secondsToMilliseconds(body.redeemDelayMaxSeconds, '兑换随机延迟'),
             actionDelayMinMs: secondsToMilliseconds(body.actionDelayMinSeconds, '页面操作随机延迟'),
-            actionDelayMaxMs: secondsToMilliseconds(body.actionDelayMaxSeconds, '页面操作随机延迟')
+            actionDelayMaxMs: secondsToMilliseconds(body.actionDelayMaxSeconds, '页面操作随机延迟'),
+            intervalHours: body.intervalHours
         }, AUTOMATION_DEFAULTS);
+        syncIntervalSchedule(config, true);
         return json(res, 200, publicAutomationConfig(config));
+    }
+    if (req.method === 'GET' && url.pathname === '/api/coupon-check') {
+        return json(res, 200, publicCouponCheckState());
+    }
+    if (req.method === 'POST' && url.pathname === '/api/coupon-check') {
+        if (!db.listAccounts(true).length) return json(res, 400, { error: '请先添加并启用至少一个兑换账号' });
+        if (!startCouponCheck('manual')) return json(res, 409, { error: '兑换或检查任务正在运行' });
+        return json(res, 202, publicCouponCheckState());
     }
     if (req.method === 'GET' && url.pathname === '/api/telegram') {
         return json(res, 200, publicTelegramConfig(db.getTelegramConfig()));
@@ -194,7 +225,9 @@ async function handleApi(req, res, url) {
         }
         return json(res, 200, { ok: true });
     }
-    if (req.method === 'GET' && url.pathname === '/api/accounts') return json(res, 200, { items: db.listAccounts() });
+    if (req.method === 'GET' && url.pathname === '/api/accounts') {
+        return json(res, 200, { items: db.listAccounts(false, url.searchParams.get('query')) });
+    }
     if (req.method === 'POST' && url.pathname === '/api/accounts') {
         const account = db.createAccount(await readJson(req));
         return json(res, 201, { account });
@@ -218,14 +251,17 @@ async function handleApi(req, res, url) {
         const body = await readJson(req);
         const accountId = body.accountId == null ? null : Number(body.accountId);
         if (accountId && !db.getAccount(accountId)) return json(res, 404, { error: '账号不存在' });
-        if (!startJob(accountId, 'manual')) return json(res, 409, { error: '已有兑换任务正在运行' });
+        if (!startJob(accountId, 'manual')) return json(res, 409, { error: '兑换或检查任务正在运行' });
         return json(res, 202, { ok: true, job: publicJobState() });
     }
     return json(res, 404, { error: '接口不存在' });
 }
 
 function publicJobState() {
-    return { running: jobState.running, jobId: jobState.jobId, progress: jobState.progress, error: jobState.error, startedAt: jobState.startedAt };
+    return {
+        running: jobState.running, jobId: jobState.jobId, progress: jobState.progress,
+        error: jobState.error, startedAt: jobState.startedAt, triggerType: jobState.triggerType
+    };
 }
 
 function publicTelegramConfig(config) {
@@ -235,12 +271,20 @@ function publicTelegramConfig(config) {
 function publicAutomationConfig(config) {
     return {
         enabled: config.enabled,
-        scheduleTime: config.scheduleTime,
         timezone: config.timezone,
         redeemDelayMinSeconds: config.redeemDelayMinMs / 1000,
         redeemDelayMaxSeconds: config.redeemDelayMaxMs / 1000,
         actionDelayMinSeconds: config.actionDelayMinMs / 1000,
-        actionDelayMaxSeconds: config.actionDelayMaxMs / 1000
+        actionDelayMaxSeconds: config.actionDelayMaxMs / 1000,
+        intervalHours: config.intervalHours
+    };
+}
+
+function publicCouponCheckState() {
+    return {
+        running: couponCheckState.running,
+        nextCheckAt: couponCheckState.nextCheckAt,
+        latest: db.latestCouponCheck()
     };
 }
 
@@ -329,40 +373,47 @@ function clamp(value, min, max, fallback) {
     return Number.isInteger(number) && number >= min && number <= max ? number : fallback;
 }
 
-function localTimeParts(date = new Date(), timezone = AUTOMATION_DEFAULTS.timezone) {
-    const parts = new Intl.DateTimeFormat('en-CA', {
-        timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
-    }).formatToParts(date);
-    return Object.fromEntries(parts.map((part) => [part.type, part.value]));
+function envBoolean(value, fallback) {
+    if (value === undefined) return fallback;
+    return !/^(0|false|no|off)$/i.test(value);
 }
 
-function checkSchedule() {
-    const automation = db.getAutomationConfig(AUTOMATION_DEFAULTS);
-    if (!automation.enabled || jobState.running) return;
-    const now = localTimeParts(new Date(), automation.timezone);
-    const dateKey = `${now.year}-${now.month}-${now.day}`;
-    const [hour, minute] = automation.scheduleTime.split(':').map(Number);
-    if (Number(now.hour) === hour && Number(now.minute) === minute && lastScheduledDate !== dateKey) {
-        lastScheduledDate = dateKey;
-        if (db.listAccounts(true).length && startJob(null, 'schedule')) console.log(`Scheduled redemption started for ${dateKey}.`);
+function syncIntervalSchedule(automation, reset = false) {
+    if (!automation.enabled) {
+        couponCheckState.nextCheckAt = null;
+        activeIntervalHours = null;
+        return;
+    }
+    if (reset || activeIntervalHours !== automation.intervalHours || !couponCheckState.nextCheckAt) {
+        activeIntervalHours = automation.intervalHours;
+        couponCheckState.nextCheckAt = new Date(Date.now() + automation.intervalHours * 3_600_000).toISOString();
     }
 }
 
-const scheduleTimer = setInterval(checkSchedule, 30_000);
-scheduleTimer.unref();
-checkSchedule();
+function checkIntervalSchedule() {
+    const automation = db.getAutomationConfig(AUTOMATION_DEFAULTS);
+    syncIntervalSchedule(automation);
+    if (!couponCheckState.nextCheckAt || Date.now() < new Date(couponCheckState.nextCheckAt).getTime()) return;
+    if (startCouponCheck('interval')) {
+        couponCheckState.nextCheckAt = new Date(Date.now() + automation.intervalHours * 3_600_000).toISOString();
+    }
+}
+
+const intervalCheckTimer = setInterval(checkIntervalSchedule, 30_000);
+intervalCheckTimer.unref();
+syncIntervalSchedule(db.getAutomationConfig(AUTOMATION_DEFAULTS));
 
 server.listen(PORT, HOST, () => {
     const automation = db.getAutomationConfig(AUTOMATION_DEFAULTS);
     console.log(`SW Coupon Console listening on http://${HOST}:${PORT}`);
     console.log(automation.enabled
-        ? `Automatic redemption: ${automation.scheduleTime} (${automation.timezone})`
-        : 'Automatic redemption is disabled.');
+        ? `Coupon check: every ${automation.intervalHours} hour(s) (${automation.timezone})`
+        : 'Scheduled coupon checking is disabled.');
 });
 
 function shutdown(signal) {
     console.log(`${signal} received, shutting down.`);
-    clearInterval(scheduleTimer);
+    clearInterval(intervalCheckTimer);
     server.close(() => {
         db.close();
         process.exit(0);

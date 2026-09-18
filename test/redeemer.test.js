@@ -32,3 +32,12 @@ test('runs redemption and skips previously successful coupons', async (t) => {
     assert.deepEqual({ success: second.success, skipped: second.skipped }, { success: 0, skipped: 2 });
     assert.equal(attempts, 2);
 });
+
+test('does not redeem an expired service account, including a targeted run', async (t) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'swcoupon-expired-service-'));
+    const db = new AppDatabase(path.join(directory, 'test.sqlite'));
+    t.after(() => { db.close(); fs.rmSync(directory, { recursive: true, force: true }); });
+    const account = db.createAccount({ name: 'Expired', hiveId: 'expired-player', server: 'global', servicePlan: 'monthly' });
+    db.db.prepare("UPDATE accounts SET service_expires_on = '2000-01-01' WHERE id = ?").run(account.id);
+    await assert.rejects(() => runRedemption({ db, accountId: account.id }), /没有可用的兑换账号/);
+});

@@ -34,9 +34,13 @@ test('reports Telegram API errors without exposing the request URL', async () =>
 test('builds a concise redemption summary', () => {
     const message = buildJobMessage({
         summary: { fetched: 3, success: 2, skipped: 1, failed: 0 },
-        triggerType: 'schedule', startedAt: '2026-09-08T04:00:00.000Z', timezone: 'Asia/Shanghai'
+        triggerType: 'manual', startedAt: '2026-09-08T04:00:00.000Z', timezone: 'Asia/Shanghai'
     });
-    assert.match(message, /定时任务/);
+    assert.match(message, /手动任务/);
     assert.match(message, /兑换成功：2/);
     assert.match(message, /已跳过：1/);
+    assert.match(buildJobMessage({
+        summary: {}, triggerType: 'interval', startedAt: '2026-09-08T04:00:00.000Z', couponCodes: ['NEW-CODE']
+    }), /定时新兑换码检查/);
+    assert.match(buildJobMessage({ summary: {}, triggerType: 'interval', couponCodes: ['NEW-CODE'] }), /兑换码：NEW-CODE/);
 });

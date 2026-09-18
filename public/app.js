@@ -4,6 +4,7 @@ const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selec
 const pageTitles = { dashboard: '运行总览', accounts: '兑换账号', records: '兑换记录', automation: '运行设置', telegram: 'Telegram 推送', security: '安全设置' };
 const serverNames = { china: '中国服', global: '全球服', asia: '亚洲服', europe: '欧洲服', korea: '韩国服', japan: '日本服' };
 const statusNames = { redeemed: '兑换成功', 'already-redeemed': '此前已兑换', failed: '兑换失败' };
+const servicePlanNames = { monthly: '一个月（自然月）', yearly: '每年', permanent: '永久' };
 
 async function api(url, options = {}) {
     const response = await fetch(url, {
@@ -37,7 +38,9 @@ function bindEvents() {
     $('#redeemAllButton').addEventListener('click', () => redeem());
     $('#addAccountButton').addEventListener('click', () => openAccount());
     $('#accountForm').addEventListener('submit', saveAccount);
+    $('#accountQuery').addEventListener('input', debounce(loadAccounts, 200));
     $('#automationForm').addEventListener('submit', saveAutomation);
+    $('#checkCouponsButton').addEventListener('click', checkCouponsNow);
     $('#telegramForm').addEventListener('submit', saveTelegram);
     $('#testTelegramButton').addEventListener('click', testTelegram);
     $('#clearTelegramButton').addEventListener('click', clearTelegram);
@@ -115,12 +118,12 @@ function showApp() {
     $('#appView').classList.remove('hidden');
     $('#currentUser').textContent = state.user.username;
     clearInterval(state.poller);
-    state.poller = setInterval(loadDashboard, 4000);
+    state.poller = setInterval(() => { loadDashboard(); loadCouponCheck(); }, 4000);
 }
 
 async function loadAll() {
     await loadAccounts();
-    await Promise.all([loadDashboard(), loadRecords(), loadRecentRecords(), loadAutomation(), loadTelegram()]);
+    await Promise.all([loadDashboard(), loadRecords(), loadRecentRecords(), loadAutomation(), loadCouponCheck(), loadTelegram()]);
 }
 
 function go(page) {
@@ -152,7 +155,9 @@ function renderJob(latest, current) {
         const p = current.progress || {};
         banner.textContent = `正在执行兑换任务 · 成功 ${p.success || 0} · 跳过 ${p.skipped || 0} · 失败 ${p.failed || 0}`;
     }
-    const item = current.running ? { ...current.progress, status: 'running', startedAt: current.startedAt, triggerType: 'manual' } : latest;
+    const item = current.running
+        ? { ...current.progress, status: 'running', startedAt: current.startedAt, triggerType: current.triggerType }
+        : latest;
     if (!item) {
         $('#latestJobStatus').className = 'status neutral';
         $('#latestJobStatus').textContent = '暂无任务';
@@ -164,30 +169,35 @@ function renderJob(latest, current) {
     $('#latestJobStatus').className = `status ${item.status === 'completed' ? 'success' : item.status === 'failed' ? 'fail' : 'running'}`;
     $('#latestJobStatus').textContent = labels[item.status] || item.status;
     $('#latestJob').className = '';
-    $('#latestJob').innerHTML = `<p class="muted">${escapeHtml(item.triggerType === 'schedule' ? '定时任务' : '手动任务')} · ${formatDate(item.startedAt)}</p>
+    const triggerLabels = { interval: '定时新兑换码检查', manual: '手动任务' };
+    $('#latestJob').innerHTML = `<p class="muted">${escapeHtml(triggerLabels[item.triggerType] || '手动任务')} · ${formatDate(item.startedAt)}</p>
         <div class="job-stats"><div><small>发现兑换码</small><strong>${item.fetched || 0}</strong></div><div><small>兑换成功</small><strong>${item.success || 0}</strong></div><div><small>已跳过</small><strong>${item.skipped || 0}</strong></div><div><small>失败</small><strong>${item.failed || 0}</strong></div></div>
         ${item.errorMessage || current.error ? `<p class="form-error">${escapeHtml(item.errorMessage || current.error)}</p>` : ''}`;
 }
 
 async function loadAccounts() {
     try {
-        const { items } = await api('/api/accounts');
+        const query = $('#accountQuery')?.value.trim();
+        const suffix = query ? `?query=${encodeURIComponent(query)}` : '';
+        const { items } = await api(`/api/accounts${suffix}`);
         state.accounts = items;
         renderAccounts();
-        $('#recordAccount').innerHTML = '<option value="">全部账号</option>' + items.map((a) => `<option value="${a.id}">${escapeHtml(a.name || a.hiveId)} · ${serverNames[a.server]}</option>`).join('');
+        if (!query) {
+            $('#recordAccount').innerHTML = '<option value="">全部账号</option>' + items.map((a) => `<option value="${a.id}">${escapeHtml(a.name || a.hiveId)} · ${serverNames[a.server]}</option>`).join('');
+        }
     } catch (error) { toast(error.message, true); }
 }
 
 function renderAccounts() {
     const root = $('#accountList');
     if (!state.accounts.length) {
-        root.innerHTML = '<article class="panel"><h3>还没有兑换账号</h3><p class="muted">添加 Hive ID 后即可执行兑换。</p></article>';
+        root.innerHTML = '<article class="panel"><h3>没有匹配的兑换账号</h3><p class="muted">可按账号 ID 或 Hive ID 模糊搜索。</p></article>';
         return;
     }
     root.innerHTML = state.accounts.map((a) => `<article class="account-card">
-        <div class="account-top"><div><p class="eyebrow">${serverNames[a.server] || a.server}</p><h3>${escapeHtml(a.name || '未命名账号')}</h3></div><span class="status ${a.enabled ? 'success' : 'neutral'}">${a.enabled ? '已启用' : '已停用'}</span></div>
-        <p class="account-id">${escapeHtml(a.hiveId)}</p><p class="account-meta">添加于 ${formatDate(a.createdAt)}</p>
-        <div class="account-actions"><button class="button secondary" data-edit="${a.id}">编辑</button><button class="button primary" data-redeem="${a.id}" ${a.enabled ? '' : 'disabled'}>兑换</button><button class="button secondary" data-delete="${a.id}">删除</button></div>
+        <div class="account-top"><div><p class="eyebrow">${serverNames[a.server] || a.server}</p><h3>${escapeHtml(a.name || '未命名账号')}</h3></div><span class="status ${a.enabled && a.serviceActive ? 'success' : 'neutral'}">${!a.enabled ? '已停用' : a.serviceActive ? '服务有效' : '服务到期'}</span></div>
+        <p class="account-id">#${a.id} · ${escapeHtml(a.hiveId)}</p><p class="account-meta">服务：${servicePlanNames[a.servicePlan] || '永久'}${a.serviceExpiresOn ? ` · 到期：${a.serviceExpiresOn}` : ''} · 添加于 ${formatDate(a.createdAt)}</p>
+        <div class="account-actions"><button class="button secondary" data-edit="${a.id}">编辑</button><button class="button primary" data-redeem="${a.id}" ${a.enabled && a.serviceActive ? '' : 'disabled'}>兑换</button><button class="button secondary" data-delete="${a.id}">删除</button></div>
     </article>`).join('');
     $$('[data-edit]', root).forEach((button) => button.addEventListener('click', () => openAccount(Number(button.dataset.edit))));
     $$('[data-redeem]', root).forEach((button) => button.addEventListener('click', () => redeem(Number(button.dataset.redeem))));
@@ -199,11 +209,12 @@ function openAccount(id) {
     form.reset();
     form.elements.id.value = '';
     form.elements.enabled.checked = true;
+    form.elements.renewService.checked = !id;
     $('#dialogTitle').textContent = id ? '编辑兑换账号' : '添加兑换账号';
     if (id) {
         const account = state.accounts.find((item) => item.id === id);
         if (!account) return;
-        for (const key of ['id', 'name', 'hiveId', 'server']) form.elements[key].value = account[key];
+        for (const key of ['id', 'name', 'hiveId', 'server', 'servicePlan']) form.elements[key].value = account[key];
         form.elements.enabled.checked = account.enabled;
     }
     $('#accountDialog').showModal();
@@ -213,6 +224,7 @@ async function saveAccount(event) {
     event.preventDefault();
     const values = Object.fromEntries(new FormData(event.currentTarget));
     values.enabled = event.currentTarget.elements.enabled.checked;
+    values.renewService = event.currentTarget.elements.renewService.checked;
     const id = values.id;
     delete values.id;
     try {
@@ -305,13 +317,13 @@ async function loadAutomation() {
 
 function renderAutomation(config) {
     const form = $('#automationForm');
-    for (const field of ['scheduleTime', 'timezone', 'redeemDelayMinSeconds', 'redeemDelayMaxSeconds', 'actionDelayMinSeconds', 'actionDelayMaxSeconds']) {
+    for (const field of ['intervalHours', 'timezone', 'redeemDelayMinSeconds', 'redeemDelayMaxSeconds', 'actionDelayMinSeconds', 'actionDelayMaxSeconds']) {
         form.elements[field].value = config[field];
     }
     form.elements.enabled.checked = config.enabled;
     const status = $('#automationStatus');
     status.className = `status ${config.enabled ? 'success' : 'neutral'}`;
-    status.textContent = config.enabled ? `${config.scheduleTime} · ${config.timezone}` : '已停用';
+    status.textContent = config.enabled ? `每 ${config.intervalHours} 小时 · ${config.timezone}` : '已停用';
 }
 
 async function saveAutomation(event) {
@@ -319,14 +331,48 @@ async function saveAutomation(event) {
     const form = event.currentTarget;
     const body = Object.fromEntries(new FormData(form));
     body.enabled = form.elements.enabled.checked;
+    body.intervalHours = Number(body.intervalHours);
     for (const field of ['redeemDelayMinSeconds', 'redeemDelayMaxSeconds', 'actionDelayMinSeconds', 'actionDelayMaxSeconds']) {
         body[field] = Number(body[field]);
     }
     try {
         const config = await api('/api/automation', { method: 'PUT', body: JSON.stringify(body) });
         renderAutomation(config);
+        await loadCouponCheck();
         toast('运行设置已保存并立即生效');
     } catch (error) { toast(error.message, true); }
+}
+
+async function loadCouponCheck() {
+    try {
+        const checkState = await api('/api/coupon-check');
+        const button = $('#checkCouponsButton');
+        button.disabled = checkState.running;
+        button.textContent = checkState.running ? '正在检查…' : '立即检查新兑换码';
+        const lines = [];
+        if (checkState.nextCheckAt) lines.push(`下次检查：${formatDate(checkState.nextCheckAt)}`);
+        if (checkState.latest) {
+            const latest = checkState.latest;
+            lines.push(`上次检查：${formatDate(latest.checkedAt)} · 获取 ${latest.fetched} · 新增 ${latest.newCount} · 待兑换 ${latest.pending}`);
+            if (latest.error) lines.push(`错误：${latest.error}`);
+        } else lines.push('尚未执行检查');
+        $('#couponCheckInfo').textContent = lines.join('\n');
+    } catch (error) { if (!isAuthError(error)) toast(error.message, true); }
+}
+
+async function checkCouponsNow() {
+    const button = $('#checkCouponsButton');
+    button.disabled = true;
+    button.textContent = '正在检查…';
+    try {
+        await api('/api/coupon-check', { method: 'POST' });
+        toast('新兑换码检查已开始');
+        setTimeout(loadCouponCheck, 1000);
+    } catch (error) {
+        toast(error.message, true);
+        button.disabled = false;
+        button.textContent = '立即检查新兑换码';
+    }
 }
 
 function renderTelegram(config) {
@@ -388,5 +434,9 @@ function formatDate(value) { return value ? new Date(`${value}${value.endsWith('
 function escapeHtml(value) { const node = document.createElement('span'); node.textContent = String(value ?? ''); return node.innerHTML; }
 function shortText(value, length) { const text = String(value); return text.length > length ? `${text.slice(0, length)}…` : text; }
 function isAuthError(error) { return /请先登录/.test(error.message); }
+function debounce(callback, wait) {
+    let timer;
+    return (...args) => { clearTimeout(timer); timer = setTimeout(() => callback(...args), wait); };
+}
 
 boot();

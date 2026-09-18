@@ -70,8 +70,8 @@
                             <div id="latestJob" class="empty">添加账号后即可开始兑换。</div>
                         </article>
                         <article class="panel accent-panel">
-                            <p class="eyebrow">AUTOMATION</p><h3>每日自动兑换</h3>
-                            <p>服务会按容器配置的时间自动检查新兑换码。成功记录将自动跳过，避免重复请求。</p>
+                            <p class="eyebrow">AUTOMATION</p><h3>定时兑换码检查</h3>
+                            <p>服务按后台设置检查新码，只有存在账号尚未使用的码时才兑换并推送。</p>
                             <button class="button ghost" data-go="accounts">管理兑换账号 →</button>
                         </article>
                     </div>
@@ -83,6 +83,7 @@
 
                 <section id="page-accounts" class="page">
                     <div class="page-actions"><p class="muted">Hive ID 仅保存在你的 SQLite 数据库中。</p><button id="addAccountButton" class="button primary">＋ 添加账号</button></div>
+                    <div class="account-search"><input id="accountQuery" type="search" placeholder="搜索账号 ID 或 Hive ID"></div>
                     <div id="accountList" class="account-grid"></div>
                 </section>
 
@@ -102,17 +103,17 @@
                 <section id="page-automation" class="page">
                     <article class="panel narrow-panel">
                         <div class="panel-head">
-                            <div><p class="eyebrow">AUTOMATION</p><h3>自动兑换与随机延迟</h3></div>
+                            <div><p class="eyebrow">AUTOMATION</p><h3>定时检查与随机延迟</h3></div>
                             <span id="automationStatus" class="status neutral">读取中</span>
                         </div>
                         <p class="muted">设置保存后立即生效，无需重启容器。正在执行的任务会继续使用启动时的延迟设置。</p>
                         <form id="automationForm" class="stack">
                             <label class="switch-row">
-                                <span><strong>启用每日自动兑换</strong><small>到达指定时间后兑换所有已启用账号</small></span>
+                                <span><strong>启用定时检查</strong><small>只在发现至少一个启用账号尚未使用的新兑换码时自动兑换并推送</small></span>
                                 <input name="enabled" type="checkbox">
                             </label>
                             <div class="field-grid">
-                                <label>每日兑换时间<input name="scheduleTime" type="time" required></label>
+                                <label>检查间隔（小时）<input name="intervalHours" type="number" min="1" max="168" step="1" required></label>
                                 <label>时区
                                     <input name="timezone" list="timezoneOptions" required placeholder="Asia/Shanghai">
                                     <datalist id="timezoneOptions">
@@ -121,6 +122,10 @@
                                         <option value="Europe/Berlin"></option><option value="America/New_York"></option>
                                     </datalist>
                                 </label>
+                            </div>
+                            <div class="interval-box">
+                                <div id="couponCheckInfo" class="check-info">尚未执行检查</div>
+                                <button id="checkCouponsButton" class="button secondary" type="button">立即检查新兑换码</button>
                             </div>
                             <div>
                                 <p class="field-title">兑换码之间随机延迟</p>
@@ -156,7 +161,7 @@
                                 <input name="chatId" autocomplete="off" placeholder="例如 123456789 或 -1001234567890">
                             </label>
                             <label class="switch-row">
-                                <span><strong>启用任务推送</strong><small>手动和定时兑换结束后自动发送</small></span>
+                                <span><strong>启用任务推送</strong><small>定时任务仅在发现待兑换的新码时发送；手动任务始终发送</small></span>
                                 <input name="enabled" type="checkbox">
                             </label>
                             <p class="muted telegram-help">先向你的 Bot 发送一条消息，再访问 Telegram Bot API 的 <code>getUpdates</code> 可找到 Chat ID。</p>
@@ -192,6 +197,14 @@
             <label>账号备注<input name="name" maxlength="100" placeholder="例如：主账号"></label>
             <label>Hive ID<input name="hiveId" maxlength="100" required placeholder="请输入 Hive ID"></label>
             <label>服务器<select name="server" required><option value="china">中国服</option><option value="global">全球服</option><option value="asia">亚洲服</option><option value="europe">欧洲服</option><option value="korea">韩国服</option><option value="japan">日本服</option></select></label>
+            <label>兑换服务有效期
+                <select name="servicePlan" required>
+                    <option value="monthly">一个月（自然月）</option>
+                    <option value="yearly">每年</option>
+                    <option value="permanent" selected>永久</option>
+                </select>
+            </label>
+            <label class="switch-row"><span><strong>从今天起续期</strong><small>编辑账号时勾选后，按所选服务有效期重新计算到期日</small></span><input name="renewService" type="checkbox"></label>
             <label class="switch-row"><span><strong>启用自动兑换</strong><small>定时任务将包含此账号</small></span><input name="enabled" type="checkbox" checked></label>
             <div class="dialog-actions"><button type="button" class="button secondary" data-close>取消</button><button class="button primary" type="submit">保存账号</button></div>
         </form>
