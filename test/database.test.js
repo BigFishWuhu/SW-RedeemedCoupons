@@ -39,7 +39,10 @@ test('stores Telegram configuration without discarding an existing token', (t) =
     const db = database(t);
     const token = '123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcd';
     const saved = db.saveTelegramConfig({ botToken: token, chatId: '-1001234567890', enabled: true });
-    assert.deepEqual(saved, { botToken: token, chatId: '-1001234567890', enabled: true });
+    assert.equal(saved.botToken, token);
+    assert.equal(saved.chatId, '-1001234567890');
+    assert.equal(saved.enabled, true);
+    assert.match(saved.webhookSecret, /^[a-f0-9]{48}$/);
     const updated = db.saveTelegramConfig({ botToken: '', chatId: '987654321', enabled: false });
     assert.equal(updated.botToken, token);
     assert.equal(updated.chatId, '987654321');
@@ -69,8 +72,9 @@ test('stores and validates automation schedule and random delays', (t) => {
     assert.equal(db.getAutomationConfig(defaults).enabled, false);
     assert.throws(() => db.saveAutomationConfig({ redeemDelayMinMs: 9000, redeemDelayMaxMs: 1000 }, defaults), /最小值/);
     assert.throws(() => db.saveAutomationConfig({ timezone: 'Not\/A-Timezone' }, defaults), /时区/);
-    for (const intervalHours of [0, 169, 1.5, 'invalid']) {
-        assert.throws(() => db.saveAutomationConfig({ intervalHours }, defaults), /1–168/);
+    assert.equal(db.saveAutomationConfig({ intervalHours: 0.5 }, defaults).intervalHours, 0.5);
+    for (const intervalHours of [0, 169, 0.75, 'invalid']) {
+        assert.throws(() => db.saveAutomationConfig({ intervalHours }, defaults), /0.5–168/);
     }
 });
 
@@ -108,22 +112,6 @@ test('manages accounts and keeps record snapshots after deletion', (t) => {
     assert.equal(records.total, 1);
     assert.equal(records.items[0].accountName, '新备注');
     assert.equal(records.items[0].accountId, null);
-});
-
-test('enforces monthly, yearly, and permanent account service validity', (t) => {
-    const db = database(t);
-    const monthly = db.createAccount({ name: 'Monthly', hiveId: 'monthly-id', server: 'global', servicePlan: 'monthly' });
-    const yearly = db.createAccount({ name: 'Yearly', hiveId: 'yearly-id', server: 'global', servicePlan: 'yearly' });
-    const permanent = db.createAccount({ name: 'Permanent', hiveId: 'permanent-id', server: 'global', servicePlan: 'permanent' });
-    assert.match(monthly.serviceExpiresOn, /^\d{4}-\d{2}-\d{2}$/);
-    assert.match(yearly.serviceExpiresOn, /^\d{4}-\d{2}-\d{2}$/);
-    assert.equal(permanent.serviceExpiresOn, null);
-    db.db.prepare("UPDATE accounts SET service_expires_on = '2000-01-01' WHERE id = ?").run(monthly.id);
-    assert.equal(db.getAccount(monthly.id).serviceActive, false);
-    assert.deepEqual(db.listAccounts(true).map((account) => account.id).sort(), [yearly.id, permanent.id].sort());
-    const renewed = db.updateAccount(yearly.id, { ...yearly, servicePlan: 'monthly', renewService: true });
-    assert.equal(renewed.servicePlan, 'monthly');
-    assert.equal(renewed.serviceActive, true);
 });
 
 test('finds accounts by internal account ID or Hive ID fragment', (t) => {

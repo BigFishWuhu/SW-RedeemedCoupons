@@ -4,7 +4,6 @@ const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selec
 const pageTitles = { dashboard: '运行总览', accounts: '兑换账号', records: '兑换记录', automation: '运行设置', telegram: 'Telegram 推送', security: '安全设置' };
 const serverNames = { china: '中国服', global: '全球服', asia: '亚洲服', europe: '欧洲服', korea: '韩国服', japan: '日本服' };
 const statusNames = { redeemed: '兑换成功', 'already-redeemed': '此前已兑换', failed: '兑换失败' };
-const servicePlanNames = { monthly: '一个月（自然月）', yearly: '每年', permanent: '永久' };
 
 async function api(url, options = {}) {
     const response = await fetch(url, {
@@ -169,7 +168,7 @@ function renderJob(latest, current) {
     $('#latestJobStatus').className = `status ${item.status === 'completed' ? 'success' : item.status === 'failed' ? 'fail' : 'running'}`;
     $('#latestJobStatus').textContent = labels[item.status] || item.status;
     $('#latestJob').className = '';
-    const triggerLabels = { interval: '定时新兑换码检查', manual: '手动任务' };
+    const triggerLabels = { interval: '定时新兑换码检查', telegram: 'Telegram 命令', manual: '手动任务' };
     $('#latestJob').innerHTML = `<p class="muted">${escapeHtml(triggerLabels[item.triggerType] || '手动任务')} · ${formatDate(item.startedAt)}</p>
         <div class="job-stats"><div><small>发现兑换码</small><strong>${item.fetched || 0}</strong></div><div><small>兑换成功</small><strong>${item.success || 0}</strong></div><div><small>已跳过</small><strong>${item.skipped || 0}</strong></div><div><small>失败</small><strong>${item.failed || 0}</strong></div></div>
         ${item.errorMessage || current.error ? `<p class="form-error">${escapeHtml(item.errorMessage || current.error)}</p>` : ''}`;
@@ -195,9 +194,9 @@ function renderAccounts() {
         return;
     }
     root.innerHTML = state.accounts.map((a) => `<article class="account-card">
-        <div class="account-top"><div><p class="eyebrow">${serverNames[a.server] || a.server}</p><h3>${escapeHtml(a.name || '未命名账号')}</h3></div><span class="status ${a.enabled && a.serviceActive ? 'success' : 'neutral'}">${!a.enabled ? '已停用' : a.serviceActive ? '服务有效' : '服务到期'}</span></div>
-        <p class="account-id">#${a.id} · ${escapeHtml(a.hiveId)}</p><p class="account-meta">服务：${servicePlanNames[a.servicePlan] || '永久'}${a.serviceExpiresOn ? ` · 到期：${a.serviceExpiresOn}` : ''} · 添加于 ${formatDate(a.createdAt)}</p>
-        <div class="account-actions"><button class="button secondary" data-edit="${a.id}">编辑</button><button class="button primary" data-redeem="${a.id}" ${a.enabled && a.serviceActive ? '' : 'disabled'}>兑换</button><button class="button secondary" data-delete="${a.id}">删除</button></div>
+        <div class="account-top"><div><p class="eyebrow">${serverNames[a.server] || a.server}</p><h3>${escapeHtml(a.name || '未命名账号')}</h3></div><span class="status ${a.enabled ? 'success' : 'neutral'}">${a.enabled ? '已启用' : '已停用'}</span></div>
+        <p class="account-id">#${a.id} · ${escapeHtml(a.hiveId)}</p><p class="account-meta">添加于 ${formatDate(a.createdAt)}</p>
+        <div class="account-actions"><button class="button secondary" data-edit="${a.id}">编辑</button><button class="button primary" data-redeem="${a.id}" ${a.enabled ? '' : 'disabled'}>兑换</button><button class="button secondary" data-delete="${a.id}">删除</button></div>
     </article>`).join('');
     $$('[data-edit]', root).forEach((button) => button.addEventListener('click', () => openAccount(Number(button.dataset.edit))));
     $$('[data-redeem]', root).forEach((button) => button.addEventListener('click', () => redeem(Number(button.dataset.redeem))));
@@ -209,12 +208,11 @@ function openAccount(id) {
     form.reset();
     form.elements.id.value = '';
     form.elements.enabled.checked = true;
-    form.elements.renewService.checked = !id;
     $('#dialogTitle').textContent = id ? '编辑兑换账号' : '添加兑换账号';
     if (id) {
         const account = state.accounts.find((item) => item.id === id);
         if (!account) return;
-        for (const key of ['id', 'name', 'hiveId', 'server', 'servicePlan']) form.elements[key].value = account[key];
+        for (const key of ['id', 'name', 'hiveId', 'server']) form.elements[key].value = account[key];
         form.elements.enabled.checked = account.enabled;
     }
     $('#accountDialog').showModal();
@@ -224,7 +222,6 @@ async function saveAccount(event) {
     event.preventDefault();
     const values = Object.fromEntries(new FormData(event.currentTarget));
     values.enabled = event.currentTarget.elements.enabled.checked;
-    values.renewService = event.currentTarget.elements.renewService.checked;
     const id = values.id;
     delete values.id;
     try {
@@ -383,7 +380,9 @@ function renderTelegram(config) {
     form.elements.enabled.checked = config.enabled;
     const status = $('#telegramStatus');
     status.className = `status ${config.enabled ? 'success' : config.hasBotToken ? 'warning' : 'neutral'}`;
-    status.textContent = config.enabled ? '已启用' : config.hasBotToken ? '已配置，未启用' : '未配置';
+    status.textContent = config.enabled
+        ? config.webhookConfigured ? '已启用 · Webhook' : '已启用 · 待注册 Webhook'
+        : config.hasBotToken ? '已配置，未启用' : '未配置';
 }
 
 async function saveTelegram(event) {

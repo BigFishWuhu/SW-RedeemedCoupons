@@ -1,10 +1,14 @@
 const http = require('node:http');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { AppDatabase, validateTelegramConfig } = require('./lib/database');
 const { runRedemption, fetchCoupons } = require('./lib/redeemer');
 const { checkForNewCoupons } = require('./lib/coupon-checker');
-const { sendTelegramMessage, buildJobMessage } = require('./lib/telegram');
+const {
+    sendTelegramMessage, setTelegramWebhook, deleteTelegramWebhook,
+    parseTelegramCommand, buildRecordsMessage, buildJobMessage
+} = require('./lib/telegram');
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -22,7 +26,7 @@ const AUTOMATION_DEFAULTS = {
     redeemDelayMaxMs: defaultRedeemDelay.max,
     actionDelayMinMs: defaultActionDelay.min,
     actionDelayMaxMs: defaultActionDelay.max,
-    intervalHours: clamp(process.env.COUPON_CHECK_HOURS, 1, 168, 1)
+    intervalHours: halfHourRange(process.env.COUPON_CHECK_HOURS, 0.5, 168, 1)
 };
 
 const db = new AppDatabase(path.join(DATA_DIR, 'swcoupon.sqlite'));
@@ -103,6 +107,36 @@ async function sendJobNotification(triggerType, error, timezone) {
     }
 }
 
+async function processTelegramUpdate(update, telegram) {
+    const command = parseTelegramCommand(update, telegram.chatId);
+    if (!command) return;
+    try {
+        await handleTelegramCommand(command, telegram);
+    } catch (error) {
+        console.warn(`Telegram command failed: ${error.message}`);
+    }
+}
+
+async function handleTelegramCommand(command, telegram) {
+    if (command.name === 'redeem') {
+        if (!db.listAccounts(true).length) {
+            return sendTelegramMessage(telegram, '⚠️ 没有已启用的兑换账号，请先在后台添加并启用账号。');
+        }
+        if (!startJob(null, 'telegram')) {
+            return sendTelegramMessage(telegram, '⚠️ 当前已有兑换或检查任务正在运行，请稍后再试。');
+        }
+        return sendTelegramMessage(telegram, '▶️ 已通过 Telegram 命令启动全部账号的立即兑换。');
+    }
+    if (command.name === 'records') {
+        const numericLimit = /^\d+$/.test(command.argument) ? Number(command.argument) : null;
+        const pageSize = numericLimit == null ? 10 : Math.min(20, Math.max(1, numericLimit));
+        const query = numericLimit == null ? command.argument : '';
+        const records = db.listRecords({ pageSize, query }).items;
+        const timezone = db.getAutomationConfig(AUTOMATION_DEFAULTS).timezone;
+        return sendTelegramMessage(telegram, buildRecordsMessage(records, timezone));
+    }
+}
+
 const server = http.createServer(async (req, res) => {
     try {
         setSecurityHeaders(res);
@@ -112,13 +146,22 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
         console.error(error.stack || error.message);
         const isConflict = String(error.code || '').includes('SQLITE_CONSTRAINT_UNIQUE');
-        const status = error.statusCode || (isConflict ? 409 : /必填|无效|有效期|至少|不能超过|格式|用户名|密码|不一致|请填写|Telegram|时间|时区|延迟/.test(error.message) ? 400 : 500);
+        const status = error.statusCode || (isConflict ? 409 : /必填|无效|至少|不能超过|格式|用户名|密码|不一致|请填写|Telegram|时间|时区|延迟/.test(error.message) ? 400 : 500);
         json(res, status, { error: status === 500 ? '服务器内部错误' : isConflict ? '相同 Hive ID 和服务器的账号已存在' : error.message });
     }
 });
 
 async function handleApi(req, res, url) {
     if (req.method === 'GET' && url.pathname === '/api/health') return json(res, 200, { ok: true });
+    if (req.method === 'POST' && url.pathname === '/api/telegram/webhook') {
+        const telegram = db.getTelegramConfig();
+        if (!telegram.enabled || !validWebhookSecret(req.headers['x-telegram-bot-api-secret-token'], telegram.webhookSecret)) {
+            return json(res, 403, { error: 'Invalid Telegram webhook secret' });
+        }
+        const update = await readJson(req);
+        setImmediate(() => processTelegramUpdate(update, telegram));
+        return json(res, 200, { ok: true });
+    }
     if (req.method === 'GET' && url.pathname === '/api/setup-status') {
         return json(res, 200, { required: db.needsSetup() });
     }
@@ -205,7 +248,19 @@ async function handleApi(req, res, url) {
         return json(res, 200, publicTelegramConfig(db.getTelegramConfig()));
     }
     if (req.method === 'PUT' && url.pathname === '/api/telegram') {
-        const config = db.saveTelegramConfig(await readJson(req));
+        const body = await readJson(req);
+        const previous = db.getTelegramConfig();
+        const webhookUrl = body.enabled === true ? publicOrigin(req) : previous.webhookUrl;
+        if (body.enabled === true && !webhookUrl.startsWith('https://')) {
+            return json(res, 400, { error: 'Telegram Webhook 需要通过公网 HTTPS 地址访问并保存配置' });
+        }
+        const config = db.saveTelegramConfig({ ...body, webhookUrl });
+        try {
+            if (config.enabled) await setTelegramWebhook(config, { dropPendingUpdates: true });
+            else if (previous.botToken) await deleteTelegramWebhook(previous);
+        } catch (error) {
+            return json(res, 502, { error: error.message });
+        }
         return json(res, 200, publicTelegramConfig(config));
     }
     if (req.method === 'POST' && url.pathname === '/api/telegram/test') {
@@ -265,7 +320,10 @@ function publicJobState() {
 }
 
 function publicTelegramConfig(config) {
-    return { enabled: config.enabled, chatId: config.chatId, hasBotToken: Boolean(config.botToken) };
+    return {
+        enabled: config.enabled, chatId: config.chatId, hasBotToken: Boolean(config.botToken),
+        webhookConfigured: Boolean(config.webhookUrl && config.webhookSecret)
+    };
 }
 
 function publicAutomationConfig(config) {
@@ -350,6 +408,14 @@ function sessionCookie(token, req) {
 }
 function clearSessionCookie(req) { return `swcoupon_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${isSecure(req) ? '; Secure' : ''}`; }
 function isSecure(req) { return req.socket.encrypted || String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https'; }
+function publicOrigin(req) {
+    return `${isSecure(req) ? 'https' : 'http'}://${req.headers.host || 'localhost'}`;
+}
+function validWebhookSecret(received, expected) {
+    const actual = Buffer.from(String(received || ''));
+    const wanted = Buffer.from(String(expected || ''));
+    return actual.length > 0 && actual.length === wanted.length && crypto.timingSafeEqual(actual, wanted);
+}
 function parseCookies(value) {
     return Object.fromEntries(value.split(';').map((part) => part.trim().split('=').map(decodeURIComponent)).filter((pair) => pair.length === 2));
 }
@@ -371,6 +437,11 @@ function secondsToMilliseconds(value, label) {
 function clamp(value, min, max, fallback) {
     const number = Number(value);
     return Number.isInteger(number) && number >= min && number <= max ? number : fallback;
+}
+
+function halfHourRange(value, min, max, fallback) {
+    const number = Number(value);
+    return Number.isFinite(number) && number >= min && number <= max && number * 2 % 1 === 0 ? number : fallback;
 }
 
 function envBoolean(value, fallback) {
@@ -402,6 +473,12 @@ function checkIntervalSchedule() {
 const intervalCheckTimer = setInterval(checkIntervalSchedule, 30_000);
 intervalCheckTimer.unref();
 syncIntervalSchedule(db.getAutomationConfig(AUTOMATION_DEFAULTS));
+const savedTelegram = db.getTelegramConfig();
+if (savedTelegram.enabled && savedTelegram.webhookUrl && savedTelegram.webhookSecret) {
+    setImmediate(() => setTelegramWebhook(savedTelegram).catch((error) => {
+        console.warn(`Telegram webhook restore failed: ${error.message}`);
+    }));
+}
 
 server.listen(PORT, HOST, () => {
     const automation = db.getAutomationConfig(AUTOMATION_DEFAULTS);

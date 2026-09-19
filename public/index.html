@@ -113,7 +113,7 @@
                                 <input name="enabled" type="checkbox">
                             </label>
                             <div class="field-grid">
-                                <label>检查间隔（小时）<input name="intervalHours" type="number" min="1" max="168" step="1" required></label>
+                                <label>检查间隔（小时）<input name="intervalHours" type="number" min="0.5" max="168" step="0.5" required></label>
                                 <label>时区
                                     <input name="timezone" list="timezoneOptions" required placeholder="Asia/Shanghai">
                                     <datalist id="timezoneOptions">
@@ -152,7 +152,7 @@
                             <div><p class="eyebrow">NOTIFICATIONS</p><h3>Telegram Bot 推送</h3></div>
                             <span id="telegramStatus" class="status neutral">未配置</span>
                         </div>
-                        <p class="muted">兑换任务结束后，将成功、跳过、失败数量推送到指定聊天。Bot Token 只保存在 SQLite 中，不会回显到浏览器。</p>
+                        <p class="muted">兑换任务结束后推送结果，并通过安全 Webhook 接收 Bot 命令。Bot Token 只保存在 SQLite 中，不会回显到浏览器。</p>
                         <form id="telegramForm" class="stack">
                             <label>Bot Token
                                 <input name="botToken" type="password" autocomplete="off" placeholder="从 @BotFather 获取；留空保留已保存值">
@@ -164,7 +164,7 @@
                                 <span><strong>启用任务推送</strong><small>定时任务仅在发现待兑换的新码时发送；手动任务始终发送</small></span>
                                 <input name="enabled" type="checkbox">
                             </label>
-                            <p class="muted telegram-help">先向你的 Bot 发送一条消息，再访问 Telegram Bot API 的 <code>getUpdates</code> 可找到 Chat ID。</p>
+                            <p class="muted telegram-help">启用命令需要用公网 HTTPS 地址访问本后台并保存配置。支持 <code>/redeem</code> 立即兑换；<code>/records</code> 查询最近记录；<code>/records 20</code> 调整数量；<code>/records 关键词</code> 搜索记录。</p>
                             <div class="settings-actions">
                                 <button class="button primary" type="submit">保存配置</button>
                                 <button id="testTelegramButton" class="button secondary" type="button">发送测试消息</button>
@@ -197,14 +197,6 @@
             <label>账号备注<input name="name" maxlength="100" placeholder="例如：主账号"></label>
             <label>Hive ID<input name="hiveId" maxlength="100" required placeholder="请输入 Hive ID"></label>
             <label>服务器<select name="server" required><option value="china">中国服</option><option value="global">全球服</option><option value="asia">亚洲服</option><option value="europe">欧洲服</option><option value="korea">韩国服</option><option value="japan">日本服</option></select></label>
-            <label>兑换服务有效期
-                <select name="servicePlan" required>
-                    <option value="monthly">一个月（自然月）</option>
-                    <option value="yearly">每年</option>
-                    <option value="permanent" selected>永久</option>
-                </select>
-            </label>
-            <label class="switch-row"><span><strong>从今天起续期</strong><small>编辑账号时勾选后，按所选服务有效期重新计算到期日</small></span><input name="renewService" type="checkbox"></label>
             <label class="switch-row"><span><strong>启用自动兑换</strong><small>定时任务将包含此账号</small></span><input name="enabled" type="checkbox" checked></label>
             <div class="dialog-actions"><button type="button" class="button secondary" data-close>取消</button><button class="button primary" type="submit">保存账号</button></div>
         </form>
