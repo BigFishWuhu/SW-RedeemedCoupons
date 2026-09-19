@@ -103,6 +103,8 @@ Bot 命令通过 Telegram Webhook 接收，因此必须使用公网 HTTPS 地址
 
 如果使用 Nginx、Caddy 或 Traefik 提供 HTTPS，请将请求反向代理至容器的 3000 端口，并保留 `Host` 和 `X-Forwarded-Proto` 请求头。应用会在 HTTPS 下自动给登录 Cookie 加上 `Secure`。
 
+如果前面使用了 CDN，请不要缓存 HTML；应用会为 JS/CSS 自动生成内容哈希版本号并返回相应缓存头。首次升级到该版本后，应在 CDN 控制台清理一次旧缓存，避免旧 HTML 与新脚本混用。
+
 ## 本地开发
 
 需要 Node.js 22.5 或更新版本以及系统可用的 Chromium：

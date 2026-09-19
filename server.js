@@ -12,6 +12,10 @@ const {
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
+const ASSET_VERSION = crypto.createHash('sha256')
+    .update(fs.readFileSync(path.join(PUBLIC_DIR, 'app.js')))
+    .update(fs.readFileSync(path.join(PUBLIC_DIR, 'styles.css')))
+    .digest('hex').slice(0, 12);
 const PORT = Math.max(1, Number(process.env.PORT || 3000));
 const HOST = process.env.HOST || '0.0.0.0';
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(ROOT, 'data'));
@@ -142,7 +146,7 @@ const server = http.createServer(async (req, res) => {
         setSecurityHeaders(res);
         const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
         if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
-        return serveStatic(req, res, url.pathname);
+        return serveStatic(req, res, url.pathname, url.searchParams.get('v'));
     } catch (error) {
         console.error(error.stack || error.message);
         const isConflict = String(error.code || '').includes('SQLITE_CONSTRAINT_UNIQUE');
@@ -346,7 +350,7 @@ function publicCouponCheckState() {
     };
 }
 
-function serveStatic(req, res, pathname) {
+function serveStatic(req, res, pathname, requestedVersion = '') {
     if (!['GET', 'HEAD'].includes(req.method)) return json(res, 405, { error: 'Method not allowed' });
     const relative = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
     const filename = path.resolve(PUBLIC_DIR, relative);
@@ -356,9 +360,19 @@ function serveStatic(req, res, pathname) {
             if (!path.extname(relative)) return serveStatic(req, res, '/');
             return json(res, 404, { error: 'Not found' });
         }
+        const isIndex = relative === 'index.html';
+        if (isIndex) content = Buffer.from(content.toString().replaceAll('__ASSET_VERSION__', ASSET_VERSION));
         res.statusCode = 200;
         res.setHeader('Content-Type', contentType(filename));
-        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('X-Asset-Version', ASSET_VERSION);
+        if (isIndex || requestedVersion !== ASSET_VERSION) {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+            res.setHeader('CDN-Cache-Control', 'no-store');
+            res.setHeader('Cloudflare-CDN-Cache-Control', 'no-store');
+            res.setHeader('Surrogate-Control', 'no-store');
+        } else {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        }
         res.end(req.method === 'HEAD' ? undefined : content);
     });
 }
